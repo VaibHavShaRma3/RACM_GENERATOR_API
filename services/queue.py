@@ -33,6 +33,7 @@ async def _run_job(job_id: str):
             file_path=job["file_path"],
             file_type=job["file_type"],
             prompt=job["prompt"],
+            file_name=job.get("file_name", ""),
         )
         logger.info(f"Job {job_id} completed successfully")
 

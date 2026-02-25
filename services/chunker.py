@@ -14,13 +14,17 @@ def semantic_chunk(
     text: str,
     max_size: int = 20000,
     overlap_sentences: int = 3,
+    context_header: str | None = None,
 ) -> list[str]:
     """Split text into chunks at paragraph/section boundaries with sentence-aware overlap."""
     if not text.strip():
         return []
 
     if len(text) <= max_size:
-        return [text]
+        chunks = [text]
+        if context_header:
+            chunks = [f"{context_header}\n---\n{chunk}" for chunk in chunks]
+        return chunks
 
     # Split by section markers (--- Page X ---) and double newlines
     sections = re.split(r"\n{2,}", text)
@@ -79,5 +83,8 @@ def semantic_chunk(
     # Don't forget the last chunk
     if current_parts:
         chunks.append("\n\n".join(current_parts))
+
+    if context_header:
+        chunks = [f"{context_header}\n---\n{chunk}" for chunk in chunks]
 
     return chunks

@@ -45,6 +45,8 @@ RACM_FIELDS = [
     "Risk Rating",
     "Mitigation Effectiveness",
     "Gaps/Weaknesses Identified",
+    "Source Quote",
+    "Extraction Confidence",
 ]
 
 
@@ -72,6 +74,8 @@ class RACMEntry(BaseModel):
     risk_rating: str = Field(default="", alias="Risk Rating")
     mitigation_effectiveness: str = Field(default="", alias="Mitigation Effectiveness")
     gaps_weaknesses: str = Field(default="", alias="Gaps/Weaknesses Identified")
+    source_quote: str = Field(default="", alias="Source Quote")
+    extraction_confidence: str = Field(default="", alias="Extraction Confidence")
 
     model_config = {"populate_by_name": True}
 

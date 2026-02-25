@@ -52,6 +52,17 @@ MAY BE INFERRED (use professional judgment):
 - Gaps/Weaknesses Identified: If none found, write "None" explicitly. Do NOT leave blank.
 
 ═══════════════════════════════════════════
+DIRECTIVE 2B — NULL / MISSING DATA RULES
+═══════════════════════════════════════════
+- If a field is NOT explicitly stated or clearly inferable from the SOP, return an empty string "".
+- Do NOT fabricate Control Owner names — if the SOP does not name a specific role, use "".
+- Do NOT guess Risk Likelihood or Risk Rating — if insufficient context, use "".
+- It is ALWAYS better to return "" than to return an incorrect or fabricated value.
+- For Assertion Mapped: MUST be "" for Operating Risk (OR) entries — no exceptions.
+- For Gaps/Weaknesses Identified: write "None" explicitly if no gaps are found. Never leave blank.
+- For Source Quote: if you cannot find a verbatim passage supporting the entry, use "" and set Extraction Confidence to "INFERRED".
+
+═══════════════════════════════════════════
 DIRECTIVE 3 — STRUCTURAL RULES
 ═══════════════════════════════════════════
 - Process Area and Sub-Process: Extract from the document header/title (e.g., "Accounts Receivable", "Customer Billing")
@@ -67,7 +78,161 @@ DIRECTIVE 4 — OUTPUT STRUCTURE
 - summary_entries: Grouped by Process Area. Include all 23 fields with executive-level detail.
 
 CONSISTENCY: Maintain deterministic output. Same input must produce the same RACM.
+
+═══════════════════════════════════════════
+DIRECTIVE 5 — EXAMPLES
+═══════════════════════════════════════════
+
+EXAMPLE 1 — Financial Reporting Risk (Happy Path):
+{
+  "Process Area": "Accounts Receivable",
+  "Sub-Process": "Customer Billing",
+  "Risk ID": "R001",
+  "Risk Description": "Invoices may be raised with incorrect rates or quantities, leading to revenue misstatement",
+  "Risk Category": "Financial Reporting",
+  "Risk Type": "FR",
+  "Control ID": "C001",
+  "Control Activity": "AM – Billing reviews and approves all invoices above $10,000 against signed contract rates before dispatch",
+  "Control Objective": "Ensure invoice accuracy and completeness before customer dispatch",
+  "Control Type": "Preventive",
+  "Control Nature": "Manual",
+  "Control Frequency": "Event based",
+  "Control Owner": "AM – Billing",
+  "Control description as per SOP": "AM – Billing reviews and approves all invoices above $10,000 against signed contract rates before dispatch",
+  "Testing Attributes": "Inspect sample of approved invoices; verify rates match contract; confirm AM signature present",
+  "Evidence/Source": "SOP-AR-001, IPE-12 (Invoice Register)",
+  "Assertion Mapped": "Existence, Valuation",
+  "Compliance Reference": "SOP-AR-001 Accounts Receivable Process",
+  "Risk Likelihood": "Medium",
+  "Risk Impact": "Financial Misstatement",
+  "Risk Rating": "Medium",
+  "Mitigation Effectiveness": "Effective",
+  "Gaps/Weaknesses Identified": "None",
+  "Source Quote": "AM – Billing reviews and approves all invoices above $10,000 against signed contract rates before dispatch",
+  "Extraction Confidence": "EXTRACTED"
+}
+
+EXAMPLE 2 — Operating Risk with Null Handling (Edge Case):
+{
+  "Process Area": "Procurement",
+  "Sub-Process": "Vendor Onboarding",
+  "Risk ID": "R002",
+  "Risk Description": "Duplicate vendor records may be created in the system, leading to duplicate payments",
+  "Risk Category": "Operational",
+  "Risk Type": "OR",
+  "Control ID": "C002",
+  "Control Activity": "ERP system performs automated duplicate check on vendor tax ID and bank details before saving new vendor record",
+  "Control Objective": "Prevent creation of duplicate vendor master records",
+  "Control Type": "Preventive",
+  "Control Nature": "Automated",
+  "Control Frequency": "Recurring",
+  "Control Owner": "ERP System",
+  "Control description as per SOP": "ERP system performs automated duplicate check on vendor tax ID and bank details before saving new vendor record",
+  "Testing Attributes": "Attempt to create duplicate vendor in test environment; verify system rejection; review duplicate check configuration",
+  "Evidence/Source": "SOP-PROC-003, IPE-5 (Vendor Master Log)",
+  "Assertion Mapped": "",
+  "Compliance Reference": "SOP-PROC-003 Vendor Management Process",
+  "Risk Likelihood": "Low",
+  "Risk Impact": "Process Inefficiency",
+  "Risk Rating": "Low",
+  "Mitigation Effectiveness": "Effective",
+  "Gaps/Weaknesses Identified": "None",
+  "Source Quote": "ERP system performs automated duplicate check on vendor tax ID and bank details before saving new vendor record",
+  "Extraction Confidence": "EXTRACTED"
+}
+
+Note on Example 2:
+- Risk Type is "OR" (Operating Risk), so Assertion Mapped is "" (blank) — operating risks do not map to financial statement assertions.
+- Control Nature is "Automated" because the ERP system enforces this control.
+- Extraction Confidence is "EXTRACTED" because the control text is verbatim from the SOP.
+- If the SOP did not name a specific owner for this control, Control Owner would be "" instead of a fabricated name.
 """
+
+_RACM_ENTRY_PROPERTIES = {
+    "Process Area": types.Schema(type=types.Type.STRING),
+    "Sub-Process": types.Schema(type=types.Type.STRING),
+    "Risk ID": types.Schema(type=types.Type.STRING),
+    "Risk Description": types.Schema(
+        type=types.Type.STRING,
+        description="The exact risk text as stated in the SOP. Do not rephrase.",
+    ),
+    "Risk Category": types.Schema(
+        type=types.Type.STRING,
+        enum=["Financial Reporting", "Operational", "Compliance", "Strategic"],
+    ),
+    "Risk Type": types.Schema(type=types.Type.STRING),
+    "Control ID": types.Schema(type=types.Type.STRING),
+    "Control Activity": types.Schema(
+        type=types.Type.STRING,
+        description="The exact control description as stated in the SOP. Do not rephrase.",
+    ),
+    "Control Objective": types.Schema(type=types.Type.STRING),
+    "Control Type": types.Schema(
+        type=types.Type.STRING,
+        enum=["Preventive", "Detective", "Corrective"],
+    ),
+    "Control Nature": types.Schema(
+        type=types.Type.STRING,
+        enum=["Manual", "Automated", "IT-Dependent Manual"],
+    ),
+    "Control Frequency": types.Schema(type=types.Type.STRING),
+    "Control Owner": types.Schema(
+        type=types.Type.STRING,
+        description="The specific role/person from the SOP who performs this control.",
+    ),
+    "Control description as per SOP": types.Schema(type=types.Type.STRING),
+    "Testing Attributes": types.Schema(type=types.Type.STRING),
+    "Evidence/Source": types.Schema(type=types.Type.STRING),
+    "Assertion Mapped": types.Schema(
+        type=types.Type.STRING,
+        description="SOX assertion(s). Leave blank for Operating Risk (OR) entries.",
+    ),
+    "Compliance Reference": types.Schema(type=types.Type.STRING),
+    "Risk Likelihood": types.Schema(
+        type=types.Type.STRING,
+        enum=["Low", "Medium", "High"],
+    ),
+    "Risk Impact": types.Schema(type=types.Type.STRING),
+    "Risk Rating": types.Schema(
+        type=types.Type.STRING,
+        enum=["Low", "Medium", "High", "Critical"],
+    ),
+    "Mitigation Effectiveness": types.Schema(
+        type=types.Type.STRING,
+        enum=["Effective", "Partially Effective", "Ineffective"],
+    ),
+    "Gaps/Weaknesses Identified": types.Schema(
+        type=types.Type.STRING,
+        description="Identified gaps or weaknesses. Write 'None' explicitly if none found.",
+    ),
+    "Source Quote": types.Schema(
+        type=types.Type.STRING,
+        description="The EXACT verbatim text from the SOP document that supports this entry's Risk Description and Control Activity. Must be a direct substring of the input.",
+    ),
+    "Extraction Confidence": types.Schema(
+        type=types.Type.STRING,
+        enum=["EXTRACTED", "INFERRED", "PARTIAL"],
+        description="EXTRACTED if Risk Description and Control Activity are verbatim from the document. INFERRED if fields were derived using professional judgment. PARTIAL if some fields are extracted and others inferred.",
+    ),
+}
+
+_RACM_ENTRY_REQUIRED = [
+    "Process Area", "Risk Description", "Control Activity",
+    "Control Owner", "Risk Type", "Control Frequency",
+]
+
+_RACM_PROPERTY_ORDERING = [
+    "Process Area", "Sub-Process",
+    "Risk ID", "Risk Description", "Risk Category", "Risk Type",
+    "Control ID", "Control Activity", "Control Objective",
+    "Control Type", "Control Nature", "Control Frequency", "Control Owner",
+    "Control description as per SOP",
+    "Testing Attributes", "Evidence/Source",
+    "Assertion Mapped", "Compliance Reference",
+    "Risk Likelihood", "Risk Impact", "Risk Rating",
+    "Mitigation Effectiveness", "Gaps/Weaknesses Identified",
+    "Source Quote", "Extraction Confidence",
+]
 
 RACM_SCHEMA = types.Schema(
     type=types.Type.OBJECT,
@@ -76,64 +241,18 @@ RACM_SCHEMA = types.Schema(
             type=types.Type.ARRAY,
             items=types.Schema(
                 type=types.Type.OBJECT,
-                properties={
-                    "Process Area": types.Schema(type=types.Type.STRING),
-                    "Sub-Process": types.Schema(type=types.Type.STRING),
-                    "Risk ID": types.Schema(type=types.Type.STRING),
-                    "Risk Description": types.Schema(type=types.Type.STRING),
-                    "Risk Category": types.Schema(type=types.Type.STRING),
-                    "Risk Type": types.Schema(type=types.Type.STRING),
-                    "Control ID": types.Schema(type=types.Type.STRING),
-                    "Control Activity": types.Schema(type=types.Type.STRING),
-                    "Control Objective": types.Schema(type=types.Type.STRING),
-                    "Control Type": types.Schema(type=types.Type.STRING),
-                    "Control Nature": types.Schema(type=types.Type.STRING),
-                    "Control Frequency": types.Schema(type=types.Type.STRING),
-                    "Control Owner": types.Schema(type=types.Type.STRING),
-                    "Control description as per SOP": types.Schema(type=types.Type.STRING),
-                    "Testing Attributes": types.Schema(type=types.Type.STRING),
-                    "Evidence/Source": types.Schema(type=types.Type.STRING),
-                    "Assertion Mapped": types.Schema(type=types.Type.STRING),
-                    "Compliance Reference": types.Schema(type=types.Type.STRING),
-                    "Risk Likelihood": types.Schema(type=types.Type.STRING),
-                    "Risk Impact": types.Schema(type=types.Type.STRING),
-                    "Risk Rating": types.Schema(type=types.Type.STRING),
-                    "Mitigation Effectiveness": types.Schema(type=types.Type.STRING),
-                    "Gaps/Weaknesses Identified": types.Schema(type=types.Type.STRING),
-                },
-                required=["Process Area", "Risk Description", "Control Activity", "Control Owner", "Risk Type", "Control Frequency"],
+                properties=_RACM_ENTRY_PROPERTIES,
+                required=_RACM_ENTRY_REQUIRED,
+                property_ordering=_RACM_PROPERTY_ORDERING,
             ),
         ),
         "summary_entries": types.Schema(
             type=types.Type.ARRAY,
             items=types.Schema(
                 type=types.Type.OBJECT,
-                properties={
-                    "Process Area": types.Schema(type=types.Type.STRING),
-                    "Sub-Process": types.Schema(type=types.Type.STRING),
-                    "Risk ID": types.Schema(type=types.Type.STRING),
-                    "Risk Description": types.Schema(type=types.Type.STRING),
-                    "Risk Category": types.Schema(type=types.Type.STRING),
-                    "Risk Type": types.Schema(type=types.Type.STRING),
-                    "Control ID": types.Schema(type=types.Type.STRING),
-                    "Control Activity": types.Schema(type=types.Type.STRING),
-                    "Control Objective": types.Schema(type=types.Type.STRING),
-                    "Control Type": types.Schema(type=types.Type.STRING),
-                    "Control Nature": types.Schema(type=types.Type.STRING),
-                    "Control Frequency": types.Schema(type=types.Type.STRING),
-                    "Control Owner": types.Schema(type=types.Type.STRING),
-                    "Control description as per SOP": types.Schema(type=types.Type.STRING),
-                    "Testing Attributes": types.Schema(type=types.Type.STRING),
-                    "Evidence/Source": types.Schema(type=types.Type.STRING),
-                    "Assertion Mapped": types.Schema(type=types.Type.STRING),
-                    "Compliance Reference": types.Schema(type=types.Type.STRING),
-                    "Risk Likelihood": types.Schema(type=types.Type.STRING),
-                    "Risk Impact": types.Schema(type=types.Type.STRING),
-                    "Risk Rating": types.Schema(type=types.Type.STRING),
-                    "Mitigation Effectiveness": types.Schema(type=types.Type.STRING),
-                    "Gaps/Weaknesses Identified": types.Schema(type=types.Type.STRING),
-                },
-                required=["Process Area", "Risk Description", "Control Activity", "Control Owner", "Risk Type", "Control Frequency"],
+                properties=_RACM_ENTRY_PROPERTIES,
+                required=_RACM_ENTRY_REQUIRED,
+                property_ordering=_RACM_PROPERTY_ORDERING,
             ),
         ),
     },

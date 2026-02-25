@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 
 from database import update_job
 from config import settings
@@ -14,6 +15,21 @@ from services.deduplicator import deduplicate_racm
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "tiff", "bmp", "webp"}
+
+
+def extract_document_metadata(raw_text: str, file_name: str) -> dict:
+    """Extract lightweight metadata from the document for chunk context headers."""
+    preview = raw_text[:3000]
+
+    # Extract likely title from first line or filename
+    first_line = preview.split("\n")[0].strip()
+    title = first_line if len(first_line) > 5 else file_name
+
+    # Find role-like patterns (e.g., "AM – Bid & Auctions", "TPA Manager")
+    role_pattern = r'(?:AM|TPA|Manager|Director|Officer|Authority|Executive|Supervisor|Analyst|Lead|Head)[\s\-–—]*[A-Za-z&\s]*'
+    roles = list(set(re.findall(role_pattern, raw_text)))[:10]
+
+    return {"title": title, "roles": roles}
 
 
 async def _update_progress(job_id: str, phase: str, pct: int, msg: str):
@@ -77,7 +93,7 @@ async def analyze_chunks_batched(
     return all_detailed, all_summary
 
 
-async def process_job(job_id: str, file_path: str, file_type: str, prompt: str | None):
+async def process_job(job_id: str, file_path: str, file_type: str, prompt: str | None, file_name: str = ""):
     """Full RACM processing pipeline: extract -> chunk -> analyze -> consolidate -> dedupe."""
 
     # Phase 1: Extract content
@@ -87,6 +103,9 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
     if len(raw_text.strip()) < 50:
         raise ValueError("Extracted content too short — file may be empty or unreadable.")
 
+    # Extract document metadata for chunk context headers
+    metadata = extract_document_metadata(raw_text, file_name or file_path)
+
     # Phase 2: Chunk
     await _update_progress(job_id, "chunking", 12, "Splitting into semantic chunks...")
     chunks = semantic_chunk(
@@ -94,6 +113,18 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
         max_size=settings.chunk_size,
         overlap_sentences=settings.chunk_overlap_sentences,
     )
+
+    # Prepend context header with chunk numbering to each chunk
+    roles_str = ', '.join(metadata['roles']) if metadata['roles'] else 'Not identified'
+    for i in range(len(chunks)):
+        header = (
+            f"DOCUMENT: {metadata['title']}\n"
+            f"CHUNK: {i + 1}/{len(chunks)}\n"
+            f"KEY ROLES: {roles_str}\n"
+            f"---"
+        )
+        chunks[i] = f"{header}\n{chunks[i]}"
+
     await update_job(job_id, total_chunks=len(chunks))
 
     # Phase 3: Analyze each chunk via Gemini

@@ -61,12 +61,29 @@ def _fuzzy_dedup(entries: list[dict], threshold: float = 0.85) -> list[dict]:
 
 
 def _reindex(entries: list[dict], risk_prefix: str = "R", ctrl_prefix: str = "C") -> list[dict]:
-    """Reassign sequential Risk IDs and Control IDs."""
+    """Reassign sequential Risk IDs and Control IDs.
+
+    Preserves shared Control IDs: entries with the same Control Activity + Control Owner
+    get the same Control ID (different risks can share a control).
+    """
     result = []
+    control_map: dict[str, str] = {}  # (activity_lower, owner_lower) → Control ID
+    ctrl_counter = 0
+
     for idx, entry in enumerate(entries, 1):
         entry = dict(entry)  # copy
         entry["Risk ID"] = f"{risk_prefix}{str(idx).zfill(3)}"
-        entry["Control ID"] = f"{ctrl_prefix}{str(idx).zfill(3)}"
+
+        # Group by (Control Activity, Control Owner) to preserve shared controls
+        activity = (entry.get("Control Activity") or "").strip().lower()
+        owner = (entry.get("Control Owner") or "").strip().lower()
+        ctrl_key = f"{activity}|{owner}"
+
+        if ctrl_key not in control_map:
+            ctrl_counter += 1
+            control_map[ctrl_key] = f"{ctrl_prefix}{str(ctrl_counter).zfill(3)}"
+
+        entry["Control ID"] = control_map[ctrl_key]
         result.append(entry)
     return result
 

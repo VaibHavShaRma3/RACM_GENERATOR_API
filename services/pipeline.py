@@ -296,31 +296,29 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
             f"Consolidated {len(all_detailed)} → {c_detailed} detailed entries in {_fmt_duration(consolidate_time)}"
         )
 
-    # ── Phase 5+6: Deduplication + Summary (parallel) ──────────
+    # ── Phase 5+6: Deduplication + Summary ──────────────────────
     phase_start = time.time()
     await _update_progress(
         job_id, "deduplicating", 92,
-        "Deduplicating + generating summary...",
-        detail=f"Running dedup ({c_detailed} entries) and summary generation in parallel..."
+        "Deduplicating and generating summary...",
+        detail=f"Running dedup ({c_detailed} entries) and summary generation..."
     )
-    logger.info(f"[{short_id}] Phase 5+6: DEDUP + SUMMARY (parallel) — {c_detailed} detailed + {c_summary} summary entries")
+    logger.info(f"[{short_id}] Phase 5+6: DEDUP + SUMMARY — {c_detailed} detailed + {c_summary} summary entries")
 
-    # Run dedup (sync, wrapped) and summary (async) in parallel
-    async def _dedup():
-        return deduplicate_racm(consolidated)
+    # Dedup (sync)
+    result = deduplicate_racm(consolidated)
 
-    async def _summary():
-        try:
-            return await generate_racm_summary(
-                consolidated.get("detailed_entries", []),
-                consolidated.get("summary_entries", []),
-                file_name or "Uploaded document",
-            )
-        except Exception as e:
-            logger.warning(f"[{short_id}] Summary generation failed: {e}")
-            return ""
+    # Summary (sync — pure Python now, no Gemini call)
+    try:
+        summary_narrative = generate_racm_summary(
+            result.get("detailed_entries", []),
+            result.get("summary_entries", []),
+            file_name or "Uploaded document",
+        )
+    except Exception as e:
+        logger.warning(f"[{short_id}] Summary generation failed: {e}")
+        summary_narrative = ""
 
-    result, summary_narrative = await asyncio.gather(_dedup(), _summary())
     parallel_time = time.time() - phase_start
 
     final_detailed = len(result.get("detailed_entries", []))

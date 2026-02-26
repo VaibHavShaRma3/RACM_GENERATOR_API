@@ -40,24 +40,43 @@ KEY PATTERNS:
 """
 
 _RACM_ENTRY_PROPERTIES = {
-    "Process Area": types.Schema(type=types.Type.STRING),
-    "Sub-Process": types.Schema(type=types.Type.STRING),
-    "Risk ID": types.Schema(type=types.Type.STRING),
+    "Process Area": types.Schema(
+        type=types.Type.STRING,
+        description="The business process area from the document header or section title (e.g., Procurement, Payroll, Accounts Payable).",
+    ),
+    "Sub-Process": types.Schema(
+        type=types.Type.STRING,
+        description="The specific sub-process within the Process Area (e.g., Invoice Verification, Payment Release, Vendor Onboarding).",
+    ),
+    "Risk ID": types.Schema(
+        type=types.Type.STRING,
+        description="Sequential risk identifier: R001, R002, R003...",
+    ),
     "Risk Description": types.Schema(
         type=types.Type.STRING,
-        description="The exact risk text as stated in the SOP. Do not rephrase.",
+        description="The exact risk text as stated in the SOP. Do not rephrase. Frame as 'Risk of...' or 'Risk that...'",
     ),
     "Risk Category": types.Schema(
         type=types.Type.STRING,
         enum=["Financial Reporting", "Operational", "Compliance", "Strategic"],
     ),
-    "Risk Type": types.Schema(type=types.Type.STRING),
-    "Control ID": types.Schema(type=types.Type.STRING),
+    "Risk Type": types.Schema(
+        type=types.Type.STRING,
+        enum=["FR", "OR"],
+        description="FR = Financial Reporting risk (affects financial statements). OR = Operating Risk (operational/process risk).",
+    ),
+    "Control ID": types.Schema(
+        type=types.Type.STRING,
+        description="Sequential control identifier: C001, C002... Multiple risks sharing the SAME control (same owner+activity) get DIFFERENT Risk IDs but the SAME Control ID.",
+    ),
     "Control Activity": types.Schema(
         type=types.Type.STRING,
         description="The exact control description as stated in the SOP. Do not rephrase.",
     ),
-    "Control Objective": types.Schema(type=types.Type.STRING),
+    "Control Objective": types.Schema(
+        type=types.Type.STRING,
+        description="What this control aims to achieve (e.g., 'Ensure accuracy of financial reporting', 'Prevent unauthorized payments', 'Detect discrepancies in reconciliation').",
+    ),
     "Control Type": types.Schema(
         type=types.Type.STRING,
         enum=["Preventive", "Detective", "Corrective"],
@@ -66,24 +85,44 @@ _RACM_ENTRY_PROPERTIES = {
         type=types.Type.STRING,
         enum=["Manual", "Automated", "IT-Dependent Manual"],
     ),
-    "Control Frequency": types.Schema(type=types.Type.STRING),
+    "Control Frequency": types.Schema(
+        type=types.Type.STRING,
+        enum=["Daily", "Weekly", "Monthly", "Quarterly", "Annual", "Recurring", "Event based", "One-Time Activity"],
+        description="How often the control is performed. Use 'Event based' for controls triggered by a specific event (e.g., per transaction, per request). Use 'Recurring' only if frequency is stated but not specific.",
+    ),
     "Control Owner": types.Schema(
         type=types.Type.STRING,
-        description="The specific role/person from the SOP who performs this control.",
+        description="The specific role/person from the SOP who performs this control. Use exact role name from document.",
     ),
-    "Control description as per SOP": types.Schema(type=types.Type.STRING),
-    "Testing Attributes": types.Schema(type=types.Type.STRING),
-    "Evidence/Source": types.Schema(type=types.Type.STRING),
+    "Control description as per SOP": types.Schema(
+        type=types.Type.STRING,
+        description="The full verbatim control description paragraph from the SOP, including any conditions, thresholds, or exceptions mentioned.",
+    ),
+    "Testing Attributes": types.Schema(
+        type=types.Type.STRING,
+        description="What an auditor should test to verify this control operates effectively (e.g., 'Sample 25 transactions and verify approval signatures exist', 'Confirm reconciliation is performed within 3 business days').",
+    ),
+    "Evidence/Source": types.Schema(
+        type=types.Type.STRING,
+        description="Documents, reports, or artifacts that evidence this control's operation. Include IPE (Information Produced by Entity) references where mentioned (e.g., 'Approval email, Purchase Order, IPE: Vendor Master Report').",
+    ),
     "Assertion Mapped": types.Schema(
         type=types.Type.STRING,
-        description="SOX assertion(s). Leave blank for Operating Risk (OR) entries.",
+        description="SOX financial statement assertions. MUST be blank ('') for OR entries. For FR entries use: Existence, Completeness, Valuation, Rights & Obligations, Presentation & Disclosure.",
     ),
-    "Compliance Reference": types.Schema(type=types.Type.STRING),
+    "Compliance Reference": types.Schema(
+        type=types.Type.STRING,
+        description="The source SOP document name and section reference (e.g., 'SOP-Payment-Requisition Section 4.2').",
+    ),
     "Risk Likelihood": types.Schema(
         type=types.Type.STRING,
         enum=["Low", "Medium", "High"],
     ),
-    "Risk Impact": types.Schema(type=types.Type.STRING),
+    "Risk Impact": types.Schema(
+        type=types.Type.STRING,
+        enum=["Financial Misstatement", "Fraud/Error", "Compliance Violation", "Operational Disruption", "Reputational Damage", "Data Loss/Breach"],
+        description="The primary impact if this risk materializes.",
+    ),
     "Risk Rating": types.Schema(
         type=types.Type.STRING,
         enum=["Low", "Medium", "High", "Critical"],
@@ -94,16 +133,16 @@ _RACM_ENTRY_PROPERTIES = {
     ),
     "Gaps/Weaknesses Identified": types.Schema(
         type=types.Type.STRING,
-        description="Identified gaps or weaknesses. Write 'None' explicitly if none found.",
+        description="Identified gaps or weaknesses. Write 'None' explicitly if none found. Examples: 'No segregation of duties', 'No independent review', 'Manual process prone to error'.",
     ),
     "Source Quote": types.Schema(
         type=types.Type.STRING,
-        description="The EXACT verbatim text from the SOP document that supports this entry's Risk Description and Control Activity. Must be a direct substring of the input.",
+        description="The EXACT verbatim text from the SOP that supports this entry. Must be a direct substring of the input. Keep under 200 characters.",
     ),
     "Extraction Confidence": types.Schema(
         type=types.Type.STRING,
         enum=["EXTRACTED", "INFERRED", "PARTIAL"],
-        description="EXTRACTED if Risk Description and Control Activity are verbatim from the document. INFERRED if fields were derived using professional judgment. PARTIAL if some fields are extracted and others inferred.",
+        description="EXTRACTED = Risk and Control are verbatim from document. INFERRED = derived using professional judgment. PARTIAL = some fields extracted, others inferred.",
     ),
 }
 
@@ -253,10 +292,28 @@ def _repair_json(raw: str) -> dict:
 
 async def analyze_chunk(chunk: str, user_instructions: str | None = None) -> dict:
     client = _get_client()
-    prompt = "AUDIT ASSIGNMENT:\nSynthesize a RACM from the following integrated evidence context.\n\n"
+    prompt = (
+        "AUDIT ASSIGNMENT:\n"
+        "Extract ALL risk-control pairs from this SOP section.\n\n"
+        "SCAN FOR THESE PATTERNS:\n"
+        "- Approval/authorization flows → risk of unauthorized transactions if not performed\n"
+        "- Reconciliation steps → risk of undetected errors or discrepancies\n"
+        "- Segregation of duties → risk of fraud if same person performs conflicting roles\n"
+        "- System access/configuration controls → risk of unauthorized access or changes\n"
+        "- Review/verification steps → risk of errors passing undetected\n"
+        "- Reporting deadlines/requirements → risk of late or inaccurate reporting\n"
+        "- Record-keeping/documentation → risk of incomplete audit trail\n"
+        "- Threshold/limit checks → risk of exceeding authorized limits\n\n"
+        "RISK INDICATOR WORDS: shall, must, required, ensure, verify, approve, authorize, "
+        "reconcile, review, validate, confirm, segregat, independent, escalat, monitor\n\n"
+        "FOR EACH STEP: Ask 'What could go wrong if this is not done or done incorrectly?' "
+        "— that is the risk. The step itself is the control.\n\n"
+        "TABLE HANDLING: If the text contains tables, each row likely represents a separate "
+        "control or process step. Extract each row as an independent entry.\n\n"
+    )
     if user_instructions:
         prompt += f"AUDITOR PREFERENCES: {user_instructions}\n\n"
-    prompt += f"INTEGRATED CONTEXT:\n{chunk}"
+    prompt += f"SOP CONTENT:\n{chunk}"
 
     chunk_size = len(chunk)
     logger.info(f"Gemini analyze_chunk call: input={chunk_size} chars, model={settings.gemini_model}")
@@ -295,10 +352,15 @@ async def vision_extract(image_bytes: bytes, mime_type: str) -> str:
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
                 (
-                    "Extract ALL text from this image. Preserve the structure, tables, "
-                    "headings, and any data relationships visible. If this is a process "
-                    "document, identify steps, roles, and controls. Return the content "
-                    "as structured text."
+                    "Extract ALL text from this SOP/process document image.\n\n"
+                    "OUTPUT FORMAT:\n"
+                    "- Preserve headings as markdown headers (# ##)\n"
+                    "- Preserve tables as markdown tables (| col1 | col2 |)\n"
+                    "- Preserve numbered/bulleted lists\n"
+                    "- Identify roles mentioned (e.g., Manager, Officer, Analyst)\n"
+                    "- Identify process steps and their sequence\n"
+                    "- Include ALL fine print, footnotes, and references\n"
+                    "- Do NOT summarize or paraphrase — extract verbatim"
                 ),
             ],
             config=types.GenerateContentConfig(temperature=0),
@@ -308,52 +370,136 @@ async def vision_extract(image_bytes: bytes, mime_type: str) -> str:
     return await _with_retry(_call)
 
 
-async def generate_racm_summary(detailed: list[dict], summary: list[dict], file_name: str) -> str:
-    """Generate a human-readable narrative summary of the RACM results."""
-    # Build a lightweight payload — just field values, no source quotes
-    condensed_entries = []
-    for entry in detailed[:100]:
-        condensed_entries.append({
-            k: v for k, v in entry.items()
-            if k not in ("Source Quote", "Control description as per SOP", "Testing Attributes")
-        })
+def generate_racm_summary(detailed: list[dict], summary: list[dict], file_name: str) -> str:
+    """Generate a human-readable summary of RACM results using pure Python aggregation.
 
-    payload = json.dumps(condensed_entries, ensure_ascii=False)
+    No Gemini call needed — all data is structured and can be counted/grouped directly.
+    This saves ~15s per job compared to the previous Gemini-based approach.
+    """
+    from collections import Counter
 
-    prompt = (
-        f"RACM SUMMARY TASK:\n"
-        f"Document: {file_name}\n"
-        f"Total detailed entries: {len(detailed)}\n"
-        f"Total summary entries: {len(summary)}\n\n"
-        f"Based on the RACM entries below, produce a structured executive summary (200-400 words) covering:\n"
-        f"1. Document name and scope of the analysis\n"
-        f"2. Total risks and controls identified\n"
-        f"3. Breakdown by Risk Category (Financial Reporting, Operational, Compliance, Strategic)\n"
-        f"4. Breakdown by Risk Rating (Critical, High, Medium, Low)\n"
-        f"5. Breakdown by Control Type (Preventive, Detective, Corrective)\n"
-        f"6. Key findings and notable gaps or weaknesses\n"
-        f"7. Extraction confidence overview (percentage of EXTRACTED vs INFERRED vs PARTIAL)\n\n"
-        f"Format as clean markdown with headers. Be concise and factual.\n\n"
-        f"RACM ENTRIES:\n{payload}"
-    )
+    t0 = time.time()
 
-    client = _get_client()
+    total_risks = len(detailed)
+    control_ids = set(e.get("Control ID", "") for e in detailed if e.get("Control ID"))
+    total_controls = len(control_ids) if control_ids else total_risks
+    process_areas = sorted(set(e.get("Process Area", "") for e in detailed if e.get("Process Area")))
 
-    async def _call():
-        t0 = time.time()
-        response = await client.aio.models.generate_content(
-            model=settings.gemini_model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0,
-                top_p=1,
-            ),
-        )
-        api_time = time.time() - t0
-        logger.info(f"Summary generation: {len(response.text)} chars in {api_time:.1f}s")
-        return response.text
+    # Breakdowns
+    by_category = Counter(e.get("Risk Category", "Unspecified") or "Unspecified" for e in detailed)
+    by_rating = Counter(e.get("Risk Rating", "Unspecified") or "Unspecified" for e in detailed)
+    by_control_type = Counter(e.get("Control Type", "Unspecified") or "Unspecified" for e in detailed)
+    by_confidence = Counter(e.get("Extraction Confidence", "INFERRED") or "INFERRED" for e in detailed)
 
-    return await _with_retry(_call)
+    # Process area breakdown
+    pa_stats = {}
+    for e in detailed:
+        pa = e.get("Process Area", "Other") or "Other"
+        if pa not in pa_stats:
+            pa_stats[pa] = {"risks": 0, "controls": set(), "top_rating": "Low"}
+        pa_stats[pa]["risks"] += 1
+        cid = e.get("Control ID", "")
+        if cid:
+            pa_stats[pa]["controls"].add(cid)
+        rating = e.get("Risk Rating", "")
+        rating_order = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
+        if rating_order.get(rating, 0) > rating_order.get(pa_stats[pa]["top_rating"], 0):
+            pa_stats[pa]["top_rating"] = rating
+
+    # Gaps/weaknesses
+    gaps = []
+    for e in detailed:
+        g = (e.get("Gaps/Weaknesses Identified") or "").strip()
+        if g and g.lower() != "none":
+            gaps.append(f"- **{e.get('Risk ID', '?')}** ({e.get('Process Area', '?')}): {g}")
+
+    # Confidence percentages
+    conf_total = sum(by_confidence.values()) or 1
+    conf_pcts = {k: round(v / conf_total * 100) for k, v in by_confidence.items()}
+
+    # Build markdown
+    md = []
+    md.append(f"## RACM Analysis: {file_name}\n")
+
+    # Overview
+    md.append("### Overview\n")
+    md.append(f"| Metric | Count |")
+    md.append(f"|---|---|")
+    md.append(f"| Total Risks | {total_risks} |")
+    md.append(f"| Total Controls | {total_controls} |")
+    md.append(f"| Process Areas | {len(process_areas)} |")
+    md.append("")
+
+    # Risk Rating Distribution
+    md.append("### Risk Rating Distribution\n")
+    for rating in ["Critical", "High", "Medium", "Low"]:
+        count = by_rating.get(rating, 0)
+        if count > 0:
+            bar = "\u2588" * min(count * 3, 30)
+            md.append(f"- **{rating}**: {bar} {count}")
+    unspec = by_rating.get("Unspecified", 0)
+    if unspec > 0:
+        md.append(f"- **Unspecified**: {unspec}")
+    md.append("")
+
+    # Risk Category Breakdown
+    md.append("### By Risk Category\n")
+    md.append("| Category | Count |")
+    md.append("|---|---|")
+    for cat in ["Financial Reporting", "Operational", "Compliance", "Strategic"]:
+        count = by_category.get(cat, 0)
+        if count > 0:
+            md.append(f"| {cat} | {count} |")
+    unspec = by_category.get("Unspecified", 0)
+    if unspec > 0:
+        md.append(f"| Unspecified | {unspec} |")
+    md.append("")
+
+    # Control Type Breakdown
+    md.append("### By Control Type\n")
+    md.append("| Type | Count |")
+    md.append("|---|---|")
+    for ct in ["Preventive", "Detective", "Corrective"]:
+        count = by_control_type.get(ct, 0)
+        if count > 0:
+            md.append(f"| {ct} | {count} |")
+    md.append("")
+
+    # By Process Area
+    if pa_stats:
+        md.append("### By Process Area\n")
+        md.append("| Process Area | Risks | Controls | Top Risk |")
+        md.append("|---|---|---|---|")
+        for pa in sorted(pa_stats.keys()):
+            s = pa_stats[pa]
+            md.append(f"| {pa} | {s['risks']} | {len(s['controls']) or s['risks']} | {s['top_rating']} |")
+        md.append("")
+
+    # Gaps & Weaknesses
+    md.append("### Key Findings & Gaps\n")
+    if gaps:
+        md.append(f"**{len(gaps)} gap(s)/weakness(es) identified:**\n")
+        for g in gaps[:15]:  # cap at 15 to keep summary concise
+            md.append(g)
+        if len(gaps) > 15:
+            md.append(f"\n*...and {len(gaps) - 15} more (see detailed table)*")
+    else:
+        md.append("No significant gaps or weaknesses identified across all entries.")
+    md.append("")
+
+    # Extraction Confidence
+    md.append("### Extraction Confidence\n")
+    for conf in ["EXTRACTED", "PARTIAL", "INFERRED"]:
+        pct = conf_pcts.get(conf, 0)
+        count = by_confidence.get(conf, 0)
+        if count > 0:
+            md.append(f"- **{conf}**: {pct}% ({count} entries)")
+    md.append("")
+
+    result = "\n".join(md)
+    elapsed = time.time() - t0
+    logger.info(f"Summary generation (Python): {len(result)} chars in {elapsed * 1000:.0f}ms")
+    return result
 
 
 async def consolidation_pass(
@@ -377,20 +523,15 @@ async def consolidation_pass(
 
     prompt = (
         "CONSOLIDATION TASK:\n"
-        "You previously analyzed a document in segments. Below are the raw extracted RACM entries.\n"
-        "Your job is to:\n"
-        "1. Merge entries ONLY if they have the same Risk Description AND the same Control Owner AND the same Control Activity.\n"
-        "   NEVER merge entries that have different Control Owners — even if the risk description is identical.\n"
-        "2. Fill in any missing fields where context from other entries provides the answer.\n"
-        "3. Ensure Risk IDs are sequential (R001, R002, ...) and Control IDs match (C001, C002, ...).\n"
-        "   If two risks share the same control (same owner, same activity), assign them different Risk IDs but the SAME Control ID.\n"
-        "4. Produce a coherent summary_entries set that groups findings by Process Area. Include all 23 fields.\n"
-        "5. Remove only TRUE duplicates (identical risk + control + owner).\n"
-        "6. Ensure Control Frequency matches the source: 'Recurring' vs 'One-Time Activity' — do NOT default all to Recurring.\n"
-        "7. Ensure Assertion Mapped is blank for OR (Operating Risk) entries and populated for FR entries.\n"
-        "8. Ensure Risk Impact uses descriptive terms (Financial Misstatement, Fraud/Error, etc.) not just Low/Medium/High.\n"
-        "9. Ensure Gaps/Weaknesses says 'None' explicitly if no gaps found, not left blank.\n"
-        "10. Ensure Compliance Reference contains the source document name.\n\n"
+        "You analyzed a document in segments. Below are the raw RACM entries from all chunks.\n"
+        "Your job:\n"
+        "1. MERGE entries ONLY if same Risk Description AND same Control Owner AND same Control Activity. "
+        "NEVER merge entries with different Control Owners.\n"
+        "2. FILL missing fields where context from other entries provides the answer.\n"
+        "3. RE-SEQUENCE Risk IDs (R001, R002...) and Control IDs (C001, C002...). "
+        "Two risks sharing the same control (same owner+activity) → different Risk IDs, SAME Control ID.\n"
+        "4. PRODUCE summary_entries grouped by Process Area.\n"
+        "5. REMOVE only TRUE duplicates (identical risk + control + owner). When in doubt, keep both entries.\n\n"
     )
     if user_instructions:
         prompt += f"AUDITOR PREFERENCES: {user_instructions}\n\n"

@@ -96,6 +96,8 @@ async def get_job_status(job_id: str):
         phase=job["phase"],
         progress_pct=job["progress_pct"],
         progress_msg=job["progress_msg"] or "",
+        detail_msg=job.get("detail_msg") or "",
+        eta_seconds=job.get("eta_seconds") or 0,
         created_at=job["created_at"],
         updated_at=job["updated_at"],
         file_name=job["file_name"],

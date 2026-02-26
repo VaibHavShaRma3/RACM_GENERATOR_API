@@ -1,4 +1,7 @@
+import logging
 from difflib import SequenceMatcher
+
+logger = logging.getLogger(__name__)
 
 
 def _exact_dedup(entries: list[dict]) -> list[dict]:
@@ -72,11 +75,29 @@ def deduplicate_racm(racm: dict) -> dict:
     detailed = racm.get("detailed_entries", [])
     summary = racm.get("summary_entries", [])
 
+    initial_detailed = len(detailed)
+    initial_summary = len(summary)
+
     detailed = _exact_dedup(detailed)
+    exact_removed = initial_detailed - len(detailed)
+    logger.info(f"Exact dedup (detailed): {initial_detailed} → {len(detailed)} (removed {exact_removed})")
+
+    pre_fuzzy = len(detailed)
     detailed = _fuzzy_dedup(detailed)
+    fuzzy_removed = pre_fuzzy - len(detailed)
+    logger.info(f"Fuzzy dedup (detailed): {pre_fuzzy} → {len(detailed)} (removed {fuzzy_removed})")
+
     detailed = _reindex(detailed, "R", "C")
 
     summary = _exact_dedup(summary)
+    summary_removed = initial_summary - len(summary)
+    logger.info(f"Exact dedup (summary): {initial_summary} → {len(summary)} (removed {summary_removed})")
     summary = _reindex(summary, "SR", "SC")
+
+    logger.info(
+        f"Dedup totals: detailed {initial_detailed} → {len(detailed)} "
+        f"(exact -{exact_removed}, fuzzy -{fuzzy_removed}), "
+        f"summary {initial_summary} → {len(summary)} (-{summary_removed})"
+    )
 
     return {"detailed_entries": detailed, "summary_entries": summary}

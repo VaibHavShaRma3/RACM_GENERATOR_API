@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 
 from database import get_job, update_job, get_incomplete_jobs
 from services.pipeline import process_job
@@ -16,17 +17,22 @@ async def dispatch_job(job_id: str):
         logger.warning(f"Job {job_id} already active, skipping dispatch")
         return
     _active_jobs.add(job_id)
+    logger.info(f"[{job_id[:8]}] Job dispatched to worker")
     asyncio.create_task(_run_job(job_id))
 
 
 async def _run_job(job_id: str):
     """Worker coroutine that processes a job and updates status in SQLite."""
+    short_id = job_id[:8]
+    start = time.time()
     try:
         await update_job(job_id, status="processing", phase="extracting", progress_pct=2)
         job = await get_job(job_id)
         if job is None:
-            logger.error(f"Job {job_id} not found in database")
+            logger.error(f"[{short_id}] Job not found in database")
             return
+
+        logger.info(f"[{short_id}] Worker started: file={job['file_name']}, type={job['file_type']}")
 
         await process_job(
             job_id=job_id,
@@ -35,15 +41,19 @@ async def _run_job(job_id: str):
             prompt=job["prompt"],
             file_name=job.get("file_name", ""),
         )
-        logger.info(f"Job {job_id} completed successfully")
+
+        elapsed = time.time() - start
+        logger.info(f"[{short_id}] Job completed successfully in {elapsed:.1f}s")
 
     except Exception as e:
-        logger.exception(f"Job {job_id} failed: {e}")
+        elapsed = time.time() - start
+        logger.exception(f"[{short_id}] Job FAILED after {elapsed:.1f}s: {e}")
         await update_job(
             job_id,
             status="failed",
             phase="failed",
             progress_msg=f"Failed: {str(e)[:500]}",
+            detail_msg=f"Error in pipeline: {type(e).__name__}: {str(e)[:300]}",
             error_message=str(e),
         )
     finally:
@@ -57,5 +67,5 @@ async def recover_incomplete_jobs():
         logger.info(f"Recovering {len(incomplete)} incomplete jobs from previous session")
     for job in incomplete:
         # Reset progress so they start fresh
-        await update_job(job["id"], status="queued", phase="queued", progress_pct=0)
+        await update_job(job["id"], status="queued", phase="queued", progress_pct=0, detail_msg="Recovering from server restart...")
         await dispatch_job(job["id"])

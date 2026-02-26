@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash"
 
     # Processing
-    chunk_size: int = 20000
+    chunk_size: int = 40000
     chunk_overlap_sentences: int = 3
     batch_concurrency: int = 3
     max_file_size_mb: int = 50

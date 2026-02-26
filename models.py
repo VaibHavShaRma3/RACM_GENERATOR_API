@@ -17,6 +17,7 @@ class JobPhase(str, Enum):
     analyzing = "analyzing"
     consolidating = "consolidating"
     deduplicating = "deduplicating"
+    summarizing = "summarizing"
     completed = "completed"
     failed = "failed"
 
@@ -83,6 +84,7 @@ class RACMEntry(BaseModel):
 class RACMResponse(BaseModel):
     detailed_entries: list[RACMEntry]
     summary_entries: list[RACMEntry]
+    summary_narrative: str = ""
 
 
 class JobCreateResponse(BaseModel):
@@ -97,6 +99,8 @@ class JobStatusResponse(BaseModel):
     phase: JobPhase
     progress_pct: int
     progress_msg: str
+    detail_msg: str = ""
+    eta_seconds: int = 0
     created_at: str
     updated_at: str
     file_name: str

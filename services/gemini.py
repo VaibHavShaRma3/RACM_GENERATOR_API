@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 
 from google import genai
 from google.genai import types
@@ -264,17 +265,41 @@ def _get_client() -> genai.Client:
     return genai.Client(api_key=settings.gemini_api_key)
 
 
-async def _with_retry(coro_func, *args, max_retries: int = 3, base_delay: float = 2.0):
+def _parse_retry_delay(err_str: str) -> float | None:
+    """Extract the retryDelay from Gemini's error response (e.g. 'retryDelay': '43s')."""
+    match = re.search(r"retryDelay['\"]:\s*['\"](\d+\.?\d*)s?['\"]", err_str)
+    if match:
+        return float(match.group(1))
+    # Also try "Please retry in Xs" pattern
+    match = re.search(r"retry in (\d+\.?\d*)s", err_str)
+    if match:
+        return float(match.group(1))
+    return None
+
+
+async def _with_retry(coro_func, *args, max_retries: int = 5, base_delay: float = 5.0):
     for attempt in range(max_retries + 1):
         try:
             return await coro_func(*args)
         except Exception as e:
             if attempt == max_retries:
                 raise
-            err_str = str(e).lower()
-            if "429" in err_str or "rate" in err_str or "resource" in err_str:
-                delay = base_delay * (2 ** attempt)
-                logger.warning(f"Rate limited, retrying in {delay}s (attempt {attempt + 1})")
+            err_str = str(e)
+            retryable = (
+                "429" in err_str or "rate" in err_str.lower() or "resource" in err_str.lower()
+                or isinstance(e, json.JSONDecodeError)
+            )
+            if retryable:
+                # Try to use the API's recommended retry delay
+                api_delay = _parse_retry_delay(err_str)
+                if api_delay and api_delay > 0:
+                    delay = min(api_delay + 2, 120)  # respect API suggestion + 2s buffer, cap at 2min
+                else:
+                    delay = base_delay * (2 ** attempt)  # 5s, 10s, 20s, 40s, 80s
+                logger.warning(
+                    f"Retryable error (attempt {attempt + 1}/{max_retries}): "
+                    f"{type(e).__name__}: {str(e)[:120]}. Retrying in {delay:.0f}s"
+                )
                 await asyncio.sleep(delay)
             else:
                 raise
@@ -285,6 +310,57 @@ def _extract_json(text: str) -> str:
     return match.group(0) if match else text
 
 
+def _repair_json(raw: str) -> dict:
+    """Attempt to parse JSON with progressive repair strategies."""
+    # 1. Direct parse
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Remove trailing commas before } or ]
+    repaired = re.sub(r",\s*([}\]])", r"\1", raw)
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Try truncating at last valid closing brace
+    # Find the last complete entry by looking for the outermost closing brace
+    brace_depth = 0
+    last_valid_pos = -1
+    for i, ch in enumerate(repaired):
+        if ch == '{':
+            brace_depth += 1
+        elif ch == '}':
+            brace_depth -= 1
+            if brace_depth == 0:
+                last_valid_pos = i
+    if last_valid_pos > 0:
+        truncated = repaired[:last_valid_pos + 1]
+        try:
+            return json.loads(truncated)
+        except json.JSONDecodeError:
+            pass
+
+    # 4. Try closing unclosed arrays/objects
+    bracket_count = raw.count('[') - raw.count(']')
+    brace_count = raw.count('{') - raw.count('}')
+    patched = re.sub(r",\s*$", "", raw.rstrip())
+    patched += ']' * max(bracket_count, 0)
+    patched += '}' * max(brace_count, 0)
+    try:
+        return json.loads(patched)
+    except json.JSONDecodeError:
+        pass
+
+    # 5. Give up — raise with context
+    raise json.JSONDecodeError(
+        f"All JSON repair strategies failed (len={len(raw)})",
+        raw[:200], 0
+    )
+
+
 async def analyze_chunk(chunk: str, user_instructions: str | None = None) -> dict:
     client = _get_client()
     prompt = "AUDIT ASSIGNMENT:\nSynthesize a RACM from the following integrated evidence context.\n\n"
@@ -292,7 +368,11 @@ async def analyze_chunk(chunk: str, user_instructions: str | None = None) -> dic
         prompt += f"AUDITOR PREFERENCES: {user_instructions}\n\n"
     prompt += f"INTEGRATED CONTEXT:\n{chunk}"
 
+    chunk_size = len(chunk)
+    logger.info(f"Gemini analyze_chunk call: input={chunk_size} chars, model={settings.gemini_model}")
+
     async def _call():
+        t0 = time.time()
         response = await client.aio.models.generate_content(
             model=settings.gemini_model,
             contents=prompt,
@@ -305,8 +385,13 @@ async def analyze_chunk(chunk: str, user_instructions: str | None = None) -> dic
                 seed=42,
             ),
         )
+        api_time = time.time() - t0
         raw = _extract_json(response.text)
-        return json.loads(raw)
+        result = _repair_json(raw)
+        n_detailed = len(result.get("detailed_entries", []))
+        n_summary = len(result.get("summary_entries", []))
+        logger.info(f"Gemini response: {n_detailed} detailed + {n_summary} summary entries, {len(response.text)} chars, {api_time:.1f}s")
+        return result
 
     return await _with_retry(_call)
 
@@ -333,10 +418,59 @@ async def vision_extract(image_bytes: bytes, mime_type: str) -> str:
     return await _with_retry(_call)
 
 
+async def generate_racm_summary(detailed: list[dict], summary: list[dict], file_name: str) -> str:
+    """Generate a human-readable narrative summary of the RACM results."""
+    # Build a lightweight payload — just field values, no source quotes
+    condensed_entries = []
+    for entry in detailed[:100]:
+        condensed_entries.append({
+            k: v for k, v in entry.items()
+            if k not in ("Source Quote", "Control description as per SOP", "Testing Attributes")
+        })
+
+    payload = json.dumps(condensed_entries, ensure_ascii=False)
+
+    prompt = (
+        f"RACM SUMMARY TASK:\n"
+        f"Document: {file_name}\n"
+        f"Total detailed entries: {len(detailed)}\n"
+        f"Total summary entries: {len(summary)}\n\n"
+        f"Based on the RACM entries below, produce a structured executive summary (200-400 words) covering:\n"
+        f"1. Document name and scope of the analysis\n"
+        f"2. Total risks and controls identified\n"
+        f"3. Breakdown by Risk Category (Financial Reporting, Operational, Compliance, Strategic)\n"
+        f"4. Breakdown by Risk Rating (Critical, High, Medium, Low)\n"
+        f"5. Breakdown by Control Type (Preventive, Detective, Corrective)\n"
+        f"6. Key findings and notable gaps or weaknesses\n"
+        f"7. Extraction confidence overview (percentage of EXTRACTED vs INFERRED vs PARTIAL)\n\n"
+        f"Format as clean markdown with headers. Be concise and factual.\n\n"
+        f"RACM ENTRIES:\n{payload}"
+    )
+
+    client = _get_client()
+
+    async def _call():
+        t0 = time.time()
+        response = await client.aio.models.generate_content(
+            model=settings.gemini_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0,
+                top_p=1,
+            ),
+        )
+        api_time = time.time() - t0
+        logger.info(f"Summary generation: {len(response.text)} chars in {api_time:.1f}s")
+        return response.text
+
+    return await _with_retry(_call)
+
+
 async def consolidation_pass(
     detailed: list[dict], summary: list[dict], user_instructions: str | None = None
 ) -> dict:
-    if len(detailed) <= 10:
+    if len(detailed) <= 20:
+        logger.info(f"Consolidation skipped: only {len(detailed)} entries (threshold: 20)")
         return {"detailed_entries": detailed, "summary_entries": summary}
 
     condensed = json.dumps(
@@ -346,7 +480,10 @@ async def consolidation_pass(
 
     # Skip consolidation if payload too large for single call
     if len(condensed) > 800_000:
+        logger.warning(f"Consolidation skipped: payload too large ({len(condensed)} chars > 800K limit)")
         return {"detailed_entries": detailed, "summary_entries": summary}
+
+    logger.info(f"Gemini consolidation call: {len(detailed)} detailed + {len(summary)} summary, payload={len(condensed)} chars")
 
     prompt = (
         "CONSOLIDATION TASK:\n"
@@ -372,6 +509,7 @@ async def consolidation_pass(
     client = _get_client()
 
     async def _call():
+        t0 = time.time()
         response = await client.aio.models.generate_content(
             model=settings.gemini_model,
             contents=prompt,
@@ -384,7 +522,12 @@ async def consolidation_pass(
                 seed=42,
             ),
         )
+        api_time = time.time() - t0
         raw = _extract_json(response.text)
-        return json.loads(raw)
+        result = _repair_json(raw)
+        n_d = len(result.get("detailed_entries", []))
+        n_s = len(result.get("summary_entries", []))
+        logger.info(f"Consolidation response: {n_d} detailed + {n_s} summary, {len(response.text)} chars, {api_time:.1f}s")
+        return result
 
     return await _with_retry(_call)

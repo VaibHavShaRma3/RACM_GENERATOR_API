@@ -1,7 +1,11 @@
+import logging
+
 import aiosqlite
 from datetime import datetime, timezone
 
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 DB_PATH = settings.database_path
 
@@ -28,6 +32,22 @@ async def init_db():
             )
         """)
         await db.commit()
+
+        # Migration: add detail_msg column if missing
+        cursor = await db.execute("PRAGMA table_info(jobs)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        if "detail_msg" not in columns:
+            logger.info("Migrating DB: adding detail_msg column")
+            await db.execute("ALTER TABLE jobs ADD COLUMN detail_msg TEXT DEFAULT ''")
+            await db.commit()
+
+        # Migration: add eta_seconds column if missing
+        cursor = await db.execute("PRAGMA table_info(jobs)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        if "eta_seconds" not in columns:
+            logger.info("Migrating DB: adding eta_seconds column")
+            await db.execute("ALTER TABLE jobs ADD COLUMN eta_seconds INTEGER DEFAULT 0")
+            await db.commit()
 
 
 async def create_job(

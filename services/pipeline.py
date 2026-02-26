@@ -210,14 +210,23 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
 
     # Prepend context header with chunk numbering to each chunk
     roles_str = ', '.join(metadata['roles']) if metadata['roles'] else 'Not identified'
+    prev_last_section = ""
     for i in range(len(chunks)):
+        # Detect section numbers in this chunk for Compliance Reference traceability
+        section_nums = re.findall(r'\b(?:Section\s+)?(\d+(?:\.\d+)+)\b', chunks[i])
+        sections_str = ', '.join(dict.fromkeys(section_nums)[:10]) if section_nums else 'Not detected'
         header = (
             f"DOCUMENT: {metadata['title']}\n"
             f"CHUNK: {i + 1}/{len(chunks)}\n"
             f"KEY ROLES: {roles_str}\n"
+            f"SECTIONS COVERED: {sections_str}\n"
+            f"PREVIOUS CHUNK LAST SECTION: {prev_last_section or 'N/A'}\n"
             f"---"
         )
         chunks[i] = f"{header}\n{chunks[i]}"
+        # Track last section for next chunk's continuity
+        if section_nums:
+            prev_last_section = section_nums[-1]
 
     chunk_time = time.time() - phase_start
     chunk_sizes = [len(c) for c in chunks]

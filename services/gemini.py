@@ -19,23 +19,71 @@ DIRECTIVE 1 — COMPLETENESS
 - Multiple risks sharing the same control (same owner+activity) → separate entries, same Control ID.
 
 DIRECTIVE 2 — EXTRACT vs INFER
-EXTRACT VERBATIM: Risk Description, Control Activity, Control description as per SOP, Risk Type (FR/OR as in SOP), Control Frequency (exactly: Recurring/One-Time Activity/Daily/Event based — do NOT default to Recurring), Assertion Mapped (from SOP; BLANK for OR entries), Control Owner (exact role), Evidence/Source (include IPE refs), Compliance Reference.
+
+EXTRACT VERBATIM: Risk Description, Control Activity, Control description as per SOP, Risk Type (FR/OR as in SOP), Evidence/Source (include IPE refs).
+
+EXTRACT WITH SECTION REFERENCE:
+  Compliance Reference — MUST include specific SOP section number.
+  Format: "{Document ID}, Section {X.Y.Z}" (e.g., "SOP-PROC-001, Section 5.3").
+  If from a Key Controls subsection, reference that subsection.
+  If spanning sections, list all (e.g., "SOP-PROC-001, Sections 6.4, 8.3").
+  NEVER use just the document title for all entries.
+
+EXTRACT WITH JUDGMENT:
+  Control Frequency — MUST be specific and testable:
+  "Per Transaction" | "Daily" | "Weekly" | "Monthly" | "Quarterly" |
+  "Annually" | "Per Batch" | "Per Change" | "Continuous" | "As Needed"
+  *** "Recurring" is NOT a valid frequency. NEVER output "Recurring". ***
+  *** "Event based" is NOT valid. Use "Per Transaction" or "Per Change". ***
+  *** "One-Time Activity" is NOT valid. Use "Annually" or "As Needed". ***
+  Decision logic:
+  - Triggers on each PR/PO/invoice/payment → "Per Transaction"
+  - System validation at form submission → "Per Transaction"
+  - Periodic report reviewed → use the review period ("Weekly", "Monthly")
+  - Runs with payment batches → "Per Batch"
+  - Annual budget cycle → "Annually"
+  - Triggered by specific event (vendor bank change) → "Per Change"
+  - Continuous monitoring tool → "Continuous"
+
+  Control Owner — MUST be a human role:
+  *** NEVER assign "ERP System", "System", "Automated", or "Banking system" as Control Owner. ***
+  The Control Owner is the PERSON responsible for:
+  (a) configuring the system rule, OR
+  (b) monitoring the system output, OR
+  (c) handling exceptions when the system flags an issue.
+  Examples: "System-enforced budget check" → "Finance Controller".
+  "Automated DOA routing" → "IT Administrator". "Banking dual auth" → "Finance Manager".
+
+  Assertion Mapped — NEVER leave blank:
+  For FR entries: financial statement assertions —
+    "Existence" | "Completeness" | "Valuation" | "Rights & Obligations" |
+    "Accuracy" | "Cutoff" | "Presentation & Disclosure"
+  For OR entries: process-level assertions —
+    "Authorization" | "Validity" | "Accuracy" | "Completeness" |
+    "Timeliness" | "Security" | "Compliance"
+  Multiple allowed, comma-separated. Old rule "BLANK for OR entries" is RETIRED.
+
 MAY INFER: Control Type (Preventive/Detective/Corrective), Control Nature (Manual/Automated/IT-Dependent Manual), Risk Category, Control Objective, Testing Attributes, Risk Likelihood (vary — not all Medium), Risk Impact (descriptive: Financial Misstatement/Fraud/Compliance Violation/etc), Risk Rating (from Likelihood×Impact), Mitigation Effectiveness, Gaps/Weaknesses (write "None" explicitly if none found).
 
 DIRECTIVE 3 — NULL RULES
 - Unknown/not inferable → return "". Never fabricate.
-- Assertion Mapped MUST be "" for OR entries.
+- Assertion Mapped: NEVER blank. Use process assertions for non-FR entries.
 - Gaps/Weaknesses: "None" if no gaps, never blank.
-- Source Quote: verbatim substring or "" with Extraction Confidence="INFERRED".
+- Source Quote: verbatim substring for EXTRACTED entries. "" for INFERRED entries.
 
 DIRECTIVE 4 — STRUCTURE
 - Process Area/Sub-Process from document header. Risk IDs: R001, R002... Control IDs: C001, C002...
 - Shared controls → different Risk IDs, same Control ID. Include IPE references.
 - detailed_entries: one per risk-control pair. summary_entries: grouped by Process Area.
 
+CONTROL TYPE vs CONTROL NATURE — DIFFERENT dimensions:
+- Type = WHAT: Preventive | Detective | Corrective
+- Nature = HOW: Manual | Automated | IT-Dependent Manual
+- NEVER put "Manual" in Type. NEVER put "Preventive" in Nature.
+
 KEY PATTERNS:
-- FR entry: Risk Type="FR", Assertion Mapped="Existence, Valuation", Control Frequency="Event based"
-- OR entry: Risk Type="OR", Assertion Mapped="" (blank!), Control Nature="Automated" if system-enforced
+- FR entry: Risk Type="FR", Assertion Mapped="Existence, Valuation", Control Frequency="Per Transaction"
+- OR entry: Risk Type="OR", Assertion Mapped="Authorization, Timeliness", Control Nature="Automated" if system-enforced
 - Pre-approval review = Preventive/Manual. Post-event sampling = Detective. System config = Preventive/Automated.
 """
 
@@ -87,12 +135,12 @@ _RACM_ENTRY_PROPERTIES = {
     ),
     "Control Frequency": types.Schema(
         type=types.Type.STRING,
-        enum=["Daily", "Weekly", "Monthly", "Quarterly", "Annual", "Recurring", "Event based", "One-Time Activity"],
-        description="How often the control is performed. Use 'Event based' for controls triggered by a specific event (e.g., per transaction, per request). Use 'Recurring' only if frequency is stated but not specific.",
+        enum=["Per Transaction", "Daily", "Weekly", "Monthly", "Quarterly", "Annually", "Per Batch", "Per Change", "Continuous", "As Needed"],
+        description="Specific testable cadence. Never 'Recurring' or 'Event based'. Per-PR/PO/invoice → 'Per Transaction'. System validation at submit → 'Per Transaction'. Payment batches → 'Per Batch'. Vendor bank change → 'Per Change'.",
     ),
     "Control Owner": types.Schema(
         type=types.Type.STRING,
-        description="The specific role/person from the SOP who performs this control. Use exact role name from document.",
+        description="Must be a human job title or role. NEVER a system name. NEVER 'ERP System', 'System', 'Automated', or 'Banking system'. For system-enforced controls, use the person who configures, monitors, or handles exceptions.",
     ),
     "Control description as per SOP": types.Schema(
         type=types.Type.STRING,
@@ -108,11 +156,11 @@ _RACM_ENTRY_PROPERTIES = {
     ),
     "Assertion Mapped": types.Schema(
         type=types.Type.STRING,
-        description="SOX financial statement assertions. MUST be blank ('') for OR entries. For FR entries use: Existence, Completeness, Valuation, Rights & Obligations, Presentation & Disclosure.",
+        description="SOX or process assertion(s). NEVER blank. For FR: Existence, Completeness, Valuation, Rights & Obligations, Accuracy, Cutoff, Presentation & Disclosure. For OR: Authorization, Validity, Accuracy, Completeness, Timeliness, Security, Compliance.",
     ),
     "Compliance Reference": types.Schema(
         type=types.Type.STRING,
-        description="The source SOP document name and section reference (e.g., 'SOP-Payment-Requisition Section 4.2').",
+        description="Must include specific section number. Format: '{Document ID}, Section {X.Y.Z}' (e.g., 'SOP-PROC-001, Section 5.2.1'). NEVER use just the document title. If spanning sections, list all.",
     ),
     "Risk Likelihood": types.Schema(
         type=types.Type.STRING,
@@ -294,7 +342,7 @@ async def analyze_chunk(chunk: str, user_instructions: str | None = None) -> dic
     client = _get_client()
     prompt = (
         "AUDIT ASSIGNMENT:\n"
-        "Extract ALL risk-control pairs from this SOP section.\n\n"
+        "Synthesize a RACM from the following integrated evidence context.\n\n"
         "SCAN FOR THESE PATTERNS:\n"
         "- Approval/authorization flows → risk of unauthorized transactions if not performed\n"
         "- Reconciliation steps → risk of undetected errors or discrepancies\n"
@@ -310,6 +358,10 @@ async def analyze_chunk(chunk: str, user_instructions: str | None = None) -> dic
         "— that is the risk. The step itself is the control.\n\n"
         "TABLE HANDLING: If the text contains tables, each row likely represents a separate "
         "control or process step. Extract each row as an independent entry.\n\n"
+        "QUALITY REQUIREMENTS:\n"
+        "- ALL 25 fields populated. No blank Assertion Mapped. No 'ERP System' as owner. No 'Recurring' as frequency.\n"
+        "- Compliance Reference must include specific section numbers (e.g., 'SOP-PROC-001, Section 5.3').\n"
+        "- Control Owner must be a human role, never a system name.\n\n"
     )
     if user_instructions:
         prompt += f"AUDITOR PREFERENCES: {user_instructions}\n\n"
@@ -446,7 +498,9 @@ def generate_racm_summary(detailed: list[dict], summary: list[dict], file_name: 
     md.append("### By Risk Category\n")
     md.append("| Category | Count |")
     md.append("|---|---|")
-    for cat in ["Financial Reporting", "Operational", "Compliance", "Strategic"]:
+    for cat in sorted(by_category.keys()):
+        if cat == "Unspecified":
+            continue
         count = by_category.get(cat, 0)
         if count > 0:
             md.append(f"| {cat} | {count} |")
@@ -530,8 +584,16 @@ async def consolidation_pass(
         "2. FILL missing fields where context from other entries provides the answer.\n"
         "3. RE-SEQUENCE Risk IDs (R001, R002...) and Control IDs (C001, C002...). "
         "Two risks sharing the same control (same owner+activity) → different Risk IDs, SAME Control ID.\n"
-        "4. PRODUCE summary_entries grouped by Process Area.\n"
+        "4. PRODUCE summary_entries grouped by Process Area. Include all 25 fields.\n"
         "5. REMOVE only TRUE duplicates (identical risk + control + owner). When in doubt, keep both entries.\n\n"
+        "QUALITY ENFORCEMENT:\n"
+        "6. Control Frequency: Replace any 'Recurring', 'Event based', or 'One-Time Activity' with specific cadence from context.\n"
+        "7. Control Owner: Replace any 'ERP System', 'System', 'Automated', or 'Banking system' with the appropriate human role.\n"
+        "8. Assertion Mapped: Populate ALL entries. Financial assertions for FR risks, process assertions (Authorization, Validity, etc.) for OR risks. NEVER leave blank.\n"
+        "9. Compliance Reference: Must have section numbers (e.g., 'SOP-PROC-001, Section 5.3'), not just the document title.\n"
+        "10. Gaps/Weaknesses: 'None' explicitly if none found, never blank.\n"
+        "11. Extraction Confidence: EXTRACTED entries must have a Source Quote. INFERRED entries may have empty Source Quote.\n"
+        "12. Control Type vs Nature: No 'Manual' in Control Type. No 'Preventive' in Control Nature. Type=WHAT, Nature=HOW.\n\n"
     )
     if user_instructions:
         prompt += f"AUDITOR PREFERENCES: {user_instructions}\n\n"

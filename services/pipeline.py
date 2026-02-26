@@ -77,32 +77,17 @@ async def extract_content(file_path: str, file_type: str) -> str:
         raise ValueError(f"Unsupported file type: {file_type}")
 
 
-def _estimate_chunk_time(chunk_chars: int) -> float:
-    """Estimate Gemini analysis time based on content size.
-
-    Observed: 14,749 chars → 175s (Gemini 2.5 Flash with thinking).
-    Rate: ~12s per 1000 chars, minimum 45s per chunk (API overhead).
-    """
-    return max(45, chunk_chars * 12 / 1000)
-
-
 async def analyze_chunks_batched(
     job_id: str,
     chunks: list[str],
     user_instructions: str | None,
-    needs_consolidation: bool = True,
 ) -> tuple[list[dict], list[dict]]:
-    """Process chunks in batches with concurrency control, progress updates, and ETA."""
+    """Process chunks in batches with concurrency control and progress updates."""
     all_detailed: list[dict] = []
     all_summary: list[dict] = []
     batch_size = settings.batch_concurrency
     total = len(chunks)
     analysis_start = time.time()
-
-    # ETA constants
-    CONSOLIDATION_ESTIMATE = 60   # seconds for consolidation pass
-    SUMMARY_ESTIMATE = 15         # seconds for summary generation
-    OVERHEAD_BUFFER = 5           # dedup + misc overhead
 
     for i in range(0, total, batch_size):
         batch = chunks[i : i + batch_size]
@@ -148,19 +133,6 @@ async def analyze_chunks_batched(
                 logger.info(f"[{job_id[:8]}] Chunk {chunk_idx}/{total} → {len(d)} detailed + {len(s)} summary entries")
 
         elapsed_total = time.time() - analysis_start
-
-        # Recalculate ETA based on actual performance
-        chunks_done = min(i + len(batch), total)
-        chunks_remaining = total - chunks_done
-        if chunks_done > 0 and chunks_remaining > 0:
-            # Use measured average per chunk for remaining estimate
-            avg_per_chunk = elapsed_total / chunks_done
-            remaining_batches = (chunks_remaining + batch_size - 1) // batch_size
-            eta_remaining = avg_per_chunk * remaining_batches
-        else:
-            eta_remaining = 0
-        eta_remaining += (CONSOLIDATION_ESTIMATE if needs_consolidation else 0) + SUMMARY_ESTIMATE + OVERHEAD_BUFFER
-        await update_job(job_id, eta_seconds=max(0, int(eta_remaining)))
 
         detail = (
             f"Batch {batch_num}/{total_batches} done in {_fmt_duration(batch_elapsed)} → "
@@ -264,27 +236,7 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
     )
     await update_job(job_id, total_chunks=len(chunks))
 
-    # Calculate initial ETA estimate based on actual content size
-    CONSOLIDATION_ESTIMATE = 60
-    SUMMARY_ESTIMATE = 15
-    OVERHEAD_BUFFER = 5
-    needs_consolidation = len(chunks) > 2
-
-    # Estimate analysis time per batch: use the largest chunk in each batch
-    total_analysis_time = 0
-    for b_start in range(0, len(chunks), settings.batch_concurrency):
-        batch_chunks = chunks[b_start : b_start + settings.batch_concurrency]
-        # Batch time = time for the slowest (largest) chunk in the batch
-        batch_time = max(_estimate_chunk_time(len(c)) for c in batch_chunks)
-        total_analysis_time += batch_time
-
-    initial_eta = int(
-        total_analysis_time
-        + (CONSOLIDATION_ESTIMATE if needs_consolidation else 0)
-        + SUMMARY_ESTIMATE + OVERHEAD_BUFFER
-    )
-    await update_job(job_id, eta_seconds=initial_eta)
-    logger.info(f"[{short_id}] Initial ETA: {_fmt_duration(initial_eta)} (chunks={len(chunks)}, total_chars={sum(chunk_sizes)}, consolidation={'yes' if needs_consolidation else 'skip'})")
+    needs_consolidation = len(chunks) > 4
 
     # ── Phase 3: Analyze each chunk via Gemini ──────────────────
     phase_start = time.time()
@@ -296,7 +248,7 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
     )
     logger.info(f"[{short_id}] Phase 3/5: ANALYZING — {len(chunks)} chunks in {total_batches} batches (concurrency={settings.batch_concurrency})")
 
-    all_detailed, all_summary = await analyze_chunks_batched(job_id, chunks, prompt, needs_consolidation=needs_consolidation)
+    all_detailed, all_summary = await analyze_chunks_batched(job_id, chunks, prompt)
     analyze_time = time.time() - phase_start
 
     if not all_detailed:
@@ -310,19 +262,17 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
     # ── Phase 4: Consolidation pass ─────────────────────────────
     phase_start = time.time()
 
-    await update_job(job_id, eta_seconds=max(0, int(CONSOLIDATION_ESTIMATE if needs_consolidation else 0) + SUMMARY_ESTIMATE + OVERHEAD_BUFFER))
-
-    if len(chunks) <= 2:
-        # Single/dual chunk — no cross-chunk duplicates to merge, skip consolidation
+    if not needs_consolidation:
+        # ≤4 chunks — local dedup handles cross-chunk merges, skip Gemini consolidation
         consolidated = {"detailed_entries": all_detailed, "summary_entries": all_summary}
         consolidate_time = time.time() - phase_start
         c_detailed = len(all_detailed)
         c_summary = len(all_summary)
-        logger.info(f"[{short_id}] Consolidation SKIPPED: only {len(chunks)} chunk(s), no cross-chunk merging needed")
+        logger.info(f"[{short_id}] Consolidation SKIPPED: only {len(chunks)} chunk(s), local dedup sufficient")
         await _update_progress(
             job_id, "consolidating", 90,
-            "Consolidation skipped (single document chunk)",
-            detail=f"Skipped consolidation — only {len(chunks)} chunk(s), no cross-chunk duplicates possible"
+            f"Consolidation skipped ({len(chunks)} chunks)",
+            detail=f"Skipped consolidation — {len(chunks)} chunk(s), local dedup handles merging"
         )
     else:
         await _update_progress(
@@ -346,55 +296,45 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
             f"Consolidated {len(all_detailed)} → {c_detailed} detailed entries in {_fmt_duration(consolidate_time)}"
         )
 
-    # ── Phase 5: Deduplication ──────────────────────────────────
-    await update_job(job_id, eta_seconds=max(0, SUMMARY_ESTIMATE + OVERHEAD_BUFFER))
+    # ── Phase 5+6: Deduplication + Summary (parallel) ──────────
     phase_start = time.time()
     await _update_progress(
         job_id, "deduplicating", 92,
-        "Removing duplicate entries...",
-        detail=f"Deduplicating {c_detailed} detailed + {c_summary} summary entries..."
+        "Deduplicating + generating summary...",
+        detail=f"Running dedup ({c_detailed} entries) and summary generation in parallel..."
     )
-    logger.info(f"[{short_id}] Phase 5/5: DEDUPLICATING — {c_detailed} detailed + {c_summary} summary entries")
+    logger.info(f"[{short_id}] Phase 5+6: DEDUP + SUMMARY (parallel) — {c_detailed} detailed + {c_summary} summary entries")
 
-    result = deduplicate_racm(consolidated)
-    dedup_time = time.time() - phase_start
+    # Run dedup (sync, wrapped) and summary (async) in parallel
+    async def _dedup():
+        return deduplicate_racm(consolidated)
+
+    async def _summary():
+        try:
+            return await generate_racm_summary(
+                consolidated.get("detailed_entries", []),
+                consolidated.get("summary_entries", []),
+                file_name or "Uploaded document",
+            )
+        except Exception as e:
+            logger.warning(f"[{short_id}] Summary generation failed: {e}")
+            return ""
+
+    result, summary_narrative = await asyncio.gather(_dedup(), _summary())
+    parallel_time = time.time() - phase_start
 
     final_detailed = len(result.get("detailed_entries", []))
     final_summary = len(result.get("summary_entries", []))
     removed = c_detailed - final_detailed
     logger.info(
-        f"[{short_id}] Deduplication done in {_fmt_duration(dedup_time)}: "
-        f"removed {removed} duplicates → {final_detailed} detailed + {final_summary} summary final"
+        f"[{short_id}] Dedup+Summary done in {_fmt_duration(parallel_time)}: "
+        f"removed {removed} duplicates → {final_detailed} detailed + {final_summary} summary, "
+        f"summary={'yes' if summary_narrative else 'failed'} ({len(summary_narrative)} chars)"
     )
     await _update_detail(
         job_id,
-        f"Removed {removed} duplicates → {final_detailed} detailed + {final_summary} summary entries"
+        f"Removed {removed} duplicates → {final_detailed} detailed + {final_summary} summary entries | Summary generated"
     )
-
-    # ── Phase 6: Summary generation ──────────────────────────────
-    await update_job(job_id, eta_seconds=SUMMARY_ESTIMATE)
-    phase_start = time.time()
-    await _update_progress(
-        job_id, "summarizing", 95,
-        "Generating executive summary...",
-        detail=f"Summarizing {final_detailed} entries into a narrative overview..."
-    )
-    logger.info(f"[{short_id}] Phase 6/6: SUMMARIZING — {final_detailed} entries")
-
-    try:
-        summary_narrative = await generate_racm_summary(
-            result.get("detailed_entries", []),
-            result.get("summary_entries", []),
-            file_name or "Uploaded document",
-        )
-        summary_time = time.time() - phase_start
-        logger.info(f"[{short_id}] Summary generated in {_fmt_duration(summary_time)}: {len(summary_narrative)} chars")
-        await _update_detail(job_id, f"Summary generated in {_fmt_duration(summary_time)}")
-    except Exception as e:
-        summary_narrative = ""
-        summary_time = time.time() - phase_start
-        logger.warning(f"[{short_id}] Summary generation failed in {_fmt_duration(summary_time)}: {e}")
-        await _update_detail(job_id, f"Summary generation failed (non-critical): {str(e)[:100]}")
 
     result["summary_narrative"] = summary_narrative
 
@@ -412,7 +352,6 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
         progress_pct=100,
         progress_msg="Analysis complete",
         detail_msg=completion_detail,
-        eta_seconds=0,
         result_json=json.dumps(result, ensure_ascii=False),
     )
 
@@ -424,8 +363,7 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
     logger.info(
         f"[{short_id}] Timing breakdown: extract={_fmt_duration(extract_time)}, "
         f"chunk={_fmt_duration(chunk_time)}, analyze={_fmt_duration(analyze_time)}, "
-        f"consolidate={_fmt_duration(consolidate_time)}, dedup={_fmt_duration(dedup_time)}, "
-        f"summary={_fmt_duration(summary_time)}"
+        f"consolidate={_fmt_duration(consolidate_time)}, dedup+summary={_fmt_duration(parallel_time)}"
     )
     logger.info(f"[{short_id}] {'='*60}")
 

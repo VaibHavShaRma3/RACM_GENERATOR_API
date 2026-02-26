@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 
@@ -43,20 +44,29 @@ async def extract_pdf(file_path: str) -> str:
         f"in {text_time:.1f}s"
     )
 
-    # Process scanned pages through Gemini Vision
+    # Process scanned pages through Gemini Vision (parallel)
     if scanned_pages:
-        logger.info(f"Starting OCR for {len(scanned_pages)} scanned pages via Gemini Vision...")
+        logger.info(f"Starting parallel OCR for {len(scanned_pages)} scanned pages via Gemini Vision...")
+        ocr_start = time.time()
 
-    for i, (page_num, image_bytes) in enumerate(scanned_pages):
-        try:
-            ocr_start = time.time()
-            vision_text = await vision_extract(image_bytes, "image/png")
-            ocr_time = time.time() - ocr_start
-            text_pages.append(f"--- Page {page_num} (scanned/OCR) ---\n{vision_text}")
-            logger.info(f"OCR page {page_num} ({i+1}/{len(scanned_pages)}): {len(vision_text)} chars in {ocr_time:.1f}s")
-        except Exception as e:
-            logger.warning(f"Vision extraction failed for page {page_num}: {e}")
-            text_pages.append(f"--- Page {page_num} (scanned - extraction failed) ---")
+        async def _ocr_page(page_num: int, image_bytes: bytes) -> tuple[int, str]:
+            try:
+                text = await vision_extract(image_bytes, "image/png")
+                logger.info(f"OCR page {page_num}: {len(text)} chars")
+                return (page_num, f"--- Page {page_num} (scanned/OCR) ---\n{text}")
+            except Exception as e:
+                logger.warning(f"Vision extraction failed for page {page_num}: {e}")
+                return (page_num, f"--- Page {page_num} (scanned - extraction failed) ---")
+
+        ocr_results = await asyncio.gather(
+            *[_ocr_page(pn, ib) for pn, ib in scanned_pages]
+        )
+        # Sort by page number to maintain order, then append
+        for _, page_text in sorted(ocr_results, key=lambda x: x[0]):
+            text_pages.append(page_text)
+
+        ocr_time = time.time() - ocr_start
+        logger.info(f"Parallel OCR complete: {len(scanned_pages)} pages in {ocr_time:.1f}s")
 
     total_time = time.time() - t0
     total_chars = sum(len(p) for p in text_pages)

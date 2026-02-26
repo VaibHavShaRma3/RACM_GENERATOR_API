@@ -10,7 +10,7 @@ from services.extractors.pdf_extractor import extract_pdf
 from services.extractors.excel_extractor import extract_excel, extract_csv
 from services.extractors.image_extractor import extract_image
 from services.chunker import semantic_chunk
-from services.gemini import analyze_chunk, consolidation_pass, generate_racm_summary
+from services.gemini import analyze_chunk, consolidation_pass, gap_analysis_pass, generate_racm_summary
 from services.deduplicator import deduplicate_racm
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,17 @@ def _fmt_duration(seconds: float) -> str:
         return f"{seconds:.1f}s"
     m, s = divmod(int(seconds), 60)
     return f"{m}m {s}s"
+
+
+def extract_section_headers(raw_text: str) -> str:
+    """Extract section headers/numbers from the document for gap analysis."""
+    headers = []
+    for line in raw_text.split("\n"):
+        stripped = line.strip()
+        # Match lines that look like section headers: "5.2.1 Something" or "# Something" or "Section 5: Something"
+        if re.match(r'^(?:\d+(?:\.\d+)+\.?\s+\S|#{1,3}\s+\S|Section\s+\d)', stripped):
+            headers.append(stripped[:120])
+    return "\n".join(headers[:50])  # Cap at 50 headers
 
 
 def extract_document_metadata(raw_text: str, file_name: str) -> dict:
@@ -176,7 +187,7 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
         f"Extracting content from {file_type.upper()} file...",
         detail=f"Reading {file_name}..."
     )
-    logger.info(f"[{short_id}] Phase 1/5: EXTRACTING — {file_name} ({file_type})")
+    logger.info(f"[{short_id}] Phase 1/6: EXTRACTING — {file_name} ({file_type})")
 
     raw_text = await extract_content(file_path, file_type)
     extract_time = time.time() - phase_start
@@ -200,7 +211,7 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
         "Splitting document into semantic chunks...",
         detail=f"Chunking {_fmt_size(len(raw_text))} with max {settings.chunk_size // 1024}KB per chunk..."
     )
-    logger.info(f"[{short_id}] Phase 2/5: CHUNKING — {_fmt_size(len(raw_text))}, max_size={settings.chunk_size}")
+    logger.info(f"[{short_id}] Phase 2/6: CHUNKING — {_fmt_size(len(raw_text))}, max_size={settings.chunk_size}")
 
     chunks = semantic_chunk(
         raw_text,
@@ -255,7 +266,7 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
         f"Analyzing {len(chunks)} chunks in {total_batches} batches...",
         detail=f"Starting Gemini analysis: {len(chunks)} chunks, batch size {settings.batch_concurrency}"
     )
-    logger.info(f"[{short_id}] Phase 3/5: ANALYZING — {len(chunks)} chunks in {total_batches} batches (concurrency={settings.batch_concurrency})")
+    logger.info(f"[{short_id}] Phase 3/6: ANALYZING — {len(chunks)} chunks in {total_batches} batches (concurrency={settings.batch_concurrency})")
 
     all_detailed, all_summary = await analyze_chunks_batched(job_id, chunks, prompt)
     analyze_time = time.time() - phase_start
@@ -289,7 +300,7 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
             "Merging and consolidating entries...",
             detail=f"Consolidating {len(all_detailed)} detailed + {len(all_summary)} summary entries via Gemini..."
         )
-        logger.info(f"[{short_id}] Phase 4/5: CONSOLIDATING — {len(all_detailed)} detailed + {len(all_summary)} summary entries")
+        logger.info(f"[{short_id}] Phase 4/6: CONSOLIDATING — {len(all_detailed)} detailed + {len(all_summary)} summary entries")
 
         consolidated = await consolidation_pass(all_detailed, all_summary, prompt)
         consolidate_time = time.time() - phase_start
@@ -305,14 +316,57 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
             f"Consolidated {len(all_detailed)} → {c_detailed} detailed entries in {_fmt_duration(consolidate_time)}"
         )
 
-    # ── Phase 5+6: Deduplication + Summary ──────────────────────
+    # ── Phase 5: Gap Analysis ──────────────────────────────────
+    phase_start = time.time()
+    await _update_progress(
+        job_id, "consolidating", 88,
+        "Running gap analysis...",
+        detail=f"Checking coverage gaps across {c_detailed} entries..."
+    )
+    logger.info(f"[{short_id}] Phase 5/6: GAP ANALYSIS — checking {c_detailed} entries for coverage gaps")
+
+    try:
+        section_hdrs = extract_section_headers(raw_text)
+        gap_result = await gap_analysis_pass(
+            consolidated.get("detailed_entries", []),
+            consolidated.get("summary_entries", []),
+            section_headers=section_hdrs,
+            user_instructions=prompt,
+        )
+        gap_detailed = gap_result.get("detailed_entries", [])
+        gap_summary = gap_result.get("summary_entries", [])
+
+        if gap_detailed or gap_summary:
+            consolidated["detailed_entries"] = consolidated.get("detailed_entries", []) + gap_detailed
+            consolidated["summary_entries"] = consolidated.get("summary_entries", []) + gap_summary
+            c_detailed = len(consolidated["detailed_entries"])
+            c_summary = len(consolidated["summary_entries"])
+            logger.info(
+                f"[{short_id}] Gap analysis added {len(gap_detailed)} detailed + {len(gap_summary)} summary entries "
+                f"→ total now {c_detailed} detailed + {c_summary} summary"
+            )
+            await _update_detail(
+                job_id,
+                f"Gap analysis added {len(gap_detailed)} entries → total {c_detailed}"
+            )
+        else:
+            logger.info(f"[{short_id}] Gap analysis: no gaps found")
+            await _update_detail(job_id, "Gap analysis: no coverage gaps found")
+    except Exception as e:
+        logger.warning(f"[{short_id}] Gap analysis failed (non-fatal): {e}")
+        await _update_detail(job_id, f"Gap analysis skipped: {str(e)[:100]}")
+
+    gap_time = time.time() - phase_start
+    logger.info(f"[{short_id}] Gap analysis done in {_fmt_duration(gap_time)}")
+
+    # ── Phase 6+7: Deduplication + Summary ──────────────────────
     phase_start = time.time()
     await _update_progress(
         job_id, "deduplicating", 92,
         "Deduplicating and generating summary...",
         detail=f"Running dedup ({c_detailed} entries) and summary generation..."
     )
-    logger.info(f"[{short_id}] Phase 5+6: DEDUP + SUMMARY — {c_detailed} detailed + {c_summary} summary entries")
+    logger.info(f"[{short_id}] Phase 6/6: DEDUP + SUMMARY — {c_detailed} detailed + {c_summary} summary entries")
 
     # Dedup (sync)
     result = deduplicate_racm(consolidated)
@@ -370,7 +424,8 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
     logger.info(
         f"[{short_id}] Timing breakdown: extract={_fmt_duration(extract_time)}, "
         f"chunk={_fmt_duration(chunk_time)}, analyze={_fmt_duration(analyze_time)}, "
-        f"consolidate={_fmt_duration(consolidate_time)}, dedup+summary={_fmt_duration(parallel_time)}"
+        f"consolidate={_fmt_duration(consolidate_time)}, gap_analysis={_fmt_duration(gap_time)}, "
+        f"dedup+summary={_fmt_duration(parallel_time)}"
     )
     logger.info(f"[{short_id}] {'='*60}")
 

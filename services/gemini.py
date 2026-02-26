@@ -18,9 +18,58 @@ DIRECTIVE 1 — COMPLETENESS
 - NEVER merge entries with different Control Owners, even if Risk Description is identical.
 - Multiple risks sharing the same control (same owner+activity) → separate entries, same Control ID.
 
+THREE-LAYER EXTRACTION MODEL:
+
+LAYER 1 — EXPLICIT CONTROLS (Extraction Confidence = "EXTRACTED"):
+- Every control from "Key Controls" subsections of each SOP phase.
+- Every SoD pair, from dedicated SoD sections AND inline phase mentions.
+- Every threshold rule (DOA matrix, payment authorization, sourcing thresholds).
+- Every system-enforced validation or workflow rule.
+→ Source Quote MUST contain a verbatim SOP substring.
+
+LAYER 2 — PROCESS STEP RISKS (Extraction Confidence = "INFERRED"):
+- For EACH numbered process step (e.g., "9.2.1 Delivery Notification"),
+  ask: "If this step is skipped, delayed, or done incorrectly, what risk materializes?"
+- If the SOP describes an activity but does NOT state an explicit control for it,
+  create a risk entry with the process activity as the implicit control.
+- Sub-Process format: "{Phase Name} - {Step Name}" (e.g., "Goods Receipt - Quality Check")
+→ Source Quote may reference the process step text. Extraction Confidence = "INFERRED".
+
+LAYER 3 — RECOMMENDED RISKS (Extraction Confidence = "RECOMMENDED"):
+- After Layers 1 and 2, generate governance/meta-risks that any auditor
+  would flag but the SOP does not explicitly address:
+  * SOP/policy version control and periodic review
+  * Stakeholder training and awareness of current procedures
+  * System access control monitoring and periodic reviews
+  * Template adequacy and version management
+  * Data integrity, backup, and record retention
+  * DOA/threshold configuration accuracy in the ERP system
+  * DOA bypass via transaction splitting to stay below approval thresholds
+  * Escalation timeline adherence monitoring
+  * KPI data accuracy and breach response procedures
+- Sub-Process: "Governance"
+- Source Quote: "" (no SOP text — these are auditor recommendations)
+- Control description as per SOP: "N/A - Recommended control"
+- Generate 5-10 RECOMMENDED entries per SOP, proportional to document complexity.
+
+MATRIX RISK GENERATION:
+When the SOP defines threshold matrices (DOA, payment authorization, sourcing
+thresholds, escalation timelines, KPI targets), ALSO generate risks for:
+(a) Configuration accuracy of thresholds in the system
+(b) Bypass via splitting or restructuring to stay below thresholds
+(c) Monitoring and adherence to escalation timelines
+(d) KPI breach detection and response procedures
+Tag as Extraction Confidence = "INFERRED" or "RECOMMENDED".
+
 DIRECTIVE 2 — EXTRACT vs INFER
 
-EXTRACT VERBATIM: Risk Description, Control Activity, Control description as per SOP, Risk Type (FR/OR as in SOP), Evidence/Source (include IPE refs).
+EXTRACT VERBATIM: Risk Description, Control Activity, Evidence/Source (include IPE refs).
+
+Control description as per SOP: The EXACT verbatim text from the SOP.
+  Must be a direct substring. If it would be identical to Control Activity,
+  still populate both separately. Control Activity is the auditor's concise
+  summary; Control description as per SOP is the raw SOP text.
+  For RECOMMENDED entries: "N/A - Recommended control".
 
 EXTRACT WITH SECTION REFERENCE:
   Compliance Reference — MUST include specific SOP section number.
@@ -30,6 +79,10 @@ EXTRACT WITH SECTION REFERENCE:
   NEVER use just the document title for all entries.
 
 EXTRACT WITH JUDGMENT:
+  Risk Type — Nature of the risk EVENT:
+  "Fraud" | "Error" | "Omission" | "Delay" | "Unauthorized Access" |
+  "Non-Compliance" | "Data Loss" | "Business Interruption" | "Misstatement"
+
   Control Frequency — MUST be specific and testable:
   "Per Transaction" | "Daily" | "Weekly" | "Monthly" | "Quarterly" |
   "Annually" | "Per Batch" | "Per Change" | "Continuous" | "As Needed"
@@ -55,26 +108,65 @@ EXTRACT WITH JUDGMENT:
   "Automated DOA routing" → "IT Administrator". "Banking dual auth" → "Finance Manager".
 
   Assertion Mapped — NEVER leave blank:
-  For FR entries: financial statement assertions —
+  For Financial Reporting risks: financial statement assertions —
     "Existence" | "Completeness" | "Valuation" | "Rights & Obligations" |
     "Accuracy" | "Cutoff" | "Presentation & Disclosure"
-  For OR entries: process-level assertions —
+  For Operational/Compliance/Fraud/other risks: process-level assertions —
     "Authorization" | "Validity" | "Accuracy" | "Completeness" |
     "Timeliness" | "Security" | "Compliance"
   Multiple allowed, comma-separated. Old rule "BLANK for OR entries" is RETIRED.
 
-MAY INFER: Control Type (Preventive/Detective/Corrective), Control Nature (Manual/Automated/IT-Dependent Manual), Risk Category, Control Objective, Testing Attributes, Risk Likelihood (vary — not all Medium), Risk Impact (descriptive: Financial Misstatement/Fraud/Compliance Violation/etc), Risk Rating (from Likelihood×Impact), Mitigation Effectiveness, Gaps/Weaknesses (write "None" explicitly if none found).
+MAY INFER:
+  Control Type (Preventive/Detective/Corrective),
+  Control Nature (Manual/Automated/IT-Dependent Manual),
+
+  Risk Category:
+  "Financial Reporting" | "Operational" | "Compliance" | "Fraud" |
+  "Strategic" | "IT General Control" | "Legal"
+  - SoD violations, payment diversion, false vendor → "Fraud"
+  - System access, configuration, data integrity → "IT General Control"
+  - Regulatory penalties, tax compliance → "Compliance"
+  - Budget alignment, strategic sourcing → "Strategic"
+  - Contract/legal disputes → "Legal"
+
+  Control Objective,
+
+  Testing Attributes — must include BOTH:
+  (a) Design Effectiveness: Verify control is designed correctly.
+      (e.g., "Review ERP workflow configuration for DOA routing rules.")
+  (b) Operating Effectiveness: Verify control operated during the period.
+      (e.g., "Select 25 PRs above $25K and verify DOA approval obtained.")
+  Include sampling guidance where applicable.
+
+  Risk Likelihood (Low/Medium/High — vary, not all Medium),
+
+  Risk Impact — specific descriptive terms ONLY:
+  "Financial Misstatement" | "Fraud/Error" | "Compliance Violation" |
+  "Regulatory Penalty" | "Reputational Damage" | "Operational Disruption" |
+  "Cash Flow Impact" | "Vendor Relationship Damage" | "Audit Qualification" |
+  "Tax Penalty" | "Legal Liability" | "Data Breach"
+  NEVER use: "Financial Mismanagement", "Process Inefficiency"
+
+  Risk Rating (Low/Medium/High/Critical),
+  Mitigation Effectiveness (Effective/Partially Effective/Ineffective),
+  Gaps/Weaknesses (write "None" explicitly if none found).
 
 DIRECTIVE 3 — NULL RULES
 - Unknown/not inferable → return "". Never fabricate.
-- Assertion Mapped: NEVER blank. Use process assertions for non-FR entries.
+- Assertion Mapped: NEVER blank. Use process assertions for non-Financial Reporting.
 - Gaps/Weaknesses: "None" if no gaps, never blank.
-- Source Quote: verbatim substring for EXTRACTED entries. "" for INFERRED entries.
+- Source Quote: verbatim for EXTRACTED. "" for INFERRED/RECOMMENDED.
+- Control description as per SOP: verbatim for EXTRACTED.
+  Paraphrased for INFERRED. "N/A - Recommended control" for RECOMMENDED.
 
 DIRECTIVE 4 — STRUCTURE
 - Process Area/Sub-Process from document header. Risk IDs: R001, R002... Control IDs: C001, C002...
 - Shared controls → different Risk IDs, same Control ID. Include IPE references.
 - detailed_entries: one per risk-control pair. summary_entries: grouped by Process Area.
+- Sub-Process format:
+  - Layer 1: "{Phase Name}"
+  - Layer 2: "{Phase Name} - {Step Name}"
+  - Layer 3: "Governance"
 
 CONTROL TYPE vs CONTROL NATURE — DIFFERENT dimensions:
 - Type = WHAT: Preventive | Detective | Corrective
@@ -82,8 +174,12 @@ CONTROL TYPE vs CONTROL NATURE — DIFFERENT dimensions:
 - NEVER put "Manual" in Type. NEVER put "Preventive" in Nature.
 
 KEY PATTERNS:
-- FR entry: Risk Type="FR", Assertion Mapped="Existence, Valuation", Control Frequency="Per Transaction"
-- OR entry: Risk Type="OR", Assertion Mapped="Authorization, Timeliness", Control Nature="Automated" if system-enforced
+- Financial Reporting: Risk Category="Financial Reporting", Risk Type="Misstatement",
+  Assertion="Existence, Valuation", Frequency="Per Transaction"
+- Operational: Risk Category="Operational", Risk Type="Delay" or "Error",
+  Assertion="Authorization" or "Timeliness"
+- Fraud/SoD: Risk Category="Fraud", Risk Type="Fraud",
+  Assertion="Authorization, Security"
 - Pre-approval review = Preventive/Manual. Post-event sampling = Detective. System config = Preventive/Automated.
 """
 
@@ -106,12 +202,13 @@ _RACM_ENTRY_PROPERTIES = {
     ),
     "Risk Category": types.Schema(
         type=types.Type.STRING,
-        enum=["Financial Reporting", "Operational", "Compliance", "Strategic"],
+        enum=["Financial Reporting", "Operational", "Compliance", "Fraud", "Strategic", "IT General Control", "Legal"],
+        description="SoD violations/payment diversion/false vendor → Fraud. System access/config/data integrity → IT General Control. Regulatory penalty/tax → Compliance. Contract/legal → Legal.",
     ),
     "Risk Type": types.Schema(
         type=types.Type.STRING,
-        enum=["FR", "OR"],
-        description="FR = Financial Reporting risk (affects financial statements). OR = Operating Risk (operational/process risk).",
+        enum=["Fraud", "Error", "Omission", "Delay", "Unauthorized Access", "Non-Compliance", "Data Loss", "Business Interruption", "Misstatement"],
+        description="Nature of the risk event. NOT a category (use Risk Category for that).",
     ),
     "Control ID": types.Schema(
         type=types.Type.STRING,
@@ -119,7 +216,7 @@ _RACM_ENTRY_PROPERTIES = {
     ),
     "Control Activity": types.Schema(
         type=types.Type.STRING,
-        description="The exact control description as stated in the SOP. Do not rephrase.",
+        description="Auditor's concise summary of the control mechanism. May paraphrase for clarity.",
     ),
     "Control Objective": types.Schema(
         type=types.Type.STRING,
@@ -144,11 +241,11 @@ _RACM_ENTRY_PROPERTIES = {
     ),
     "Control description as per SOP": types.Schema(
         type=types.Type.STRING,
-        description="The full verbatim control description paragraph from the SOP, including any conditions, thresholds, or exceptions mentioned.",
+        description="The EXACT verbatim text from the SOP — must be a direct substring. For RECOMMENDED entries: 'N/A - Recommended control'. Different from Control Activity (which is the auditor's summary).",
     ),
     "Testing Attributes": types.Schema(
         type=types.Type.STRING,
-        description="What an auditor should test to verify this control operates effectively (e.g., 'Sample 25 transactions and verify approval signatures exist', 'Confirm reconciliation is performed within 3 business days').",
+        description="Must include BOTH: (a) Design Effectiveness — how to verify control is designed correctly (e.g., 'Review ERP workflow configuration for DOA routing rules'). (b) Operating Effectiveness — how to verify control operated during period (e.g., 'Select 25 PRs above $25K and verify DOA approval obtained'). Include sampling guidance.",
     ),
     "Evidence/Source": types.Schema(
         type=types.Type.STRING,
@@ -168,8 +265,8 @@ _RACM_ENTRY_PROPERTIES = {
     ),
     "Risk Impact": types.Schema(
         type=types.Type.STRING,
-        enum=["Financial Misstatement", "Fraud/Error", "Compliance Violation", "Operational Disruption", "Reputational Damage", "Data Loss/Breach"],
-        description="The primary impact if this risk materializes.",
+        enum=["Financial Misstatement", "Fraud/Error", "Compliance Violation", "Regulatory Penalty", "Reputational Damage", "Operational Disruption", "Cash Flow Impact", "Vendor Relationship Damage", "Audit Qualification", "Tax Penalty", "Legal Liability", "Data Breach"],
+        description="Specific impact term. NEVER use 'Financial Mismanagement' or 'Process Inefficiency'.",
     ),
     "Risk Rating": types.Schema(
         type=types.Type.STRING,
@@ -189,14 +286,15 @@ _RACM_ENTRY_PROPERTIES = {
     ),
     "Extraction Confidence": types.Schema(
         type=types.Type.STRING,
-        enum=["EXTRACTED", "INFERRED", "PARTIAL"],
-        description="EXTRACTED = Risk and Control are verbatim from document. INFERRED = derived using professional judgment. PARTIAL = some fields extracted, others inferred.",
+        enum=["EXTRACTED", "INFERRED", "PARTIAL", "RECOMMENDED"],
+        description="EXTRACTED = verbatim from document (Layer 1). INFERRED = derived from process steps (Layer 2). PARTIAL = some fields extracted, others inferred. RECOMMENDED = auditor-generated governance risk (Layer 3).",
     ),
 }
 
 _RACM_ENTRY_REQUIRED = [
     "Process Area", "Risk Description", "Control Activity",
     "Control Owner", "Risk Type", "Control Frequency",
+    "Assertion Mapped", "Extraction Confidence",
 ]
 
 _RACM_PROPERTY_ORDERING = [
@@ -358,10 +456,13 @@ async def analyze_chunk(chunk: str, user_instructions: str | None = None) -> dic
         "— that is the risk. The step itself is the control.\n\n"
         "TABLE HANDLING: If the text contains tables, each row likely represents a separate "
         "control or process step. Extract each row as an independent entry.\n\n"
-        "QUALITY REQUIREMENTS:\n"
-        "- ALL 25 fields populated. No blank Assertion Mapped. No 'ERP System' as owner. No 'Recurring' as frequency.\n"
-        "- Compliance Reference must include specific section numbers (e.g., 'SOP-PROC-001, Section 5.3').\n"
-        "- Control Owner must be a human role, never a system name.\n\n"
+        "EXTRACTION REQUIREMENTS:\n"
+        "1. LAYER 1: Extract every explicit control from Key Controls subsections, SoD sections, and threshold matrices. Tag: EXTRACTED.\n"
+        "2. LAYER 2: For each numbered process step, identify inherent risks even if no explicit control is stated. Tag: INFERRED.\n"
+        "3. LAYER 3: Generate 2-4 governance/meta-risks for this section. Tag: RECOMMENDED.\n"
+        "4. ALL 25 fields populated. No blank Assertion. No 'ERP System' owner. No 'Recurring'.\n"
+        "5. Compliance Reference must include specific section numbers.\n"
+        "6. Control Activity = auditor summary. Control description as per SOP = exact SOP text.\n\n"
     )
     if user_instructions:
         prompt += f"AUDITOR PREFERENCES: {user_instructions}\n\n"
@@ -404,15 +505,13 @@ async def vision_extract(image_bytes: bytes, mime_type: str) -> str:
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
                 (
-                    "Extract ALL text from this SOP/process document image.\n\n"
-                    "OUTPUT FORMAT:\n"
-                    "- Preserve headings as markdown headers (# ##)\n"
-                    "- Preserve tables as markdown tables (| col1 | col2 |)\n"
-                    "- Preserve numbered/bulleted lists\n"
-                    "- Identify roles mentioned (e.g., Manager, Officer, Analyst)\n"
-                    "- Identify process steps and their sequence\n"
-                    "- Include ALL fine print, footnotes, and references\n"
-                    "- Do NOT summarize or paraphrase — extract verbatim"
+                    "Extract ALL text from this image. Preserve:\n"
+                    "- Section numbers exactly as shown (e.g., '5.2.1', 'Section 13')\n"
+                    "- Tables in markdown format with all cells\n"
+                    "- RACI, DOA, approval matrices — all cells preserved\n"
+                    "- Roles, job titles, monetary thresholds exactly\n"
+                    "- Bullet/numbered list hierarchy\n"
+                    "Return as structured text."
                 ),
             ],
             config=types.GenerateContentConfig(temperature=0),
@@ -543,7 +642,7 @@ def generate_racm_summary(detailed: list[dict], summary: list[dict], file_name: 
 
     # Extraction Confidence
     md.append("### Extraction Confidence\n")
-    for conf in ["EXTRACTED", "PARTIAL", "INFERRED"]:
+    for conf in ["EXTRACTED", "PARTIAL", "INFERRED", "RECOMMENDED"]:
         pct = conf_pcts.get(conf, 0)
         count = by_confidence.get(conf, 0)
         if count > 0:
@@ -621,6 +720,85 @@ async def consolidation_pass(
         n_d = len(result.get("detailed_entries", []))
         n_s = len(result.get("summary_entries", []))
         logger.info(f"Consolidation response: {n_d} detailed + {n_s} summary, {len(response.text)} chars, {api_time:.1f}s")
+        return result
+
+    return await _with_retry(_call)
+
+
+async def gap_analysis_pass(
+    detailed: list[dict],
+    summary: list[dict],
+    section_headers: str = "",
+    user_instructions: str | None = None,
+) -> dict:
+    """Validate RACM completeness and generate entries for coverage gaps."""
+    entry_count = len(detailed)
+    next_risk_id = entry_count + 1
+
+    condensed = json.dumps(
+        {"detailed_entries": detailed[:200], "summary_entries": summary[:50]},
+        ensure_ascii=False,
+    )
+
+    # Skip if payload too large
+    if len(condensed) > 800_000:
+        logger.warning(f"Gap analysis skipped: payload too large ({len(condensed)} chars)")
+        return {"detailed_entries": [], "summary_entries": []}
+
+    logger.info(f"Gap analysis call: {entry_count} entries, payload={len(condensed)} chars")
+
+    # Count existing RECOMMENDED entries
+    recommended_count = sum(
+        1 for e in detailed if (e.get("Extraction Confidence") or "").upper() == "RECOMMENDED"
+    )
+
+    prompt = (
+        "GAP ANALYSIS TASK:\n"
+        "Find what is MISSING and generate entries to fill gaps.\n\n"
+        "CHECK 1 — SOP SECTION COVERAGE:\n"
+        "Verify at least one risk-control pair per major SOP section/phase.\n\n"
+        "CHECK 2 — SoD MATRIX COMPLETENESS:\n"
+        "Verify every SoD pair from any SoD table/matrix is covered.\n\n"
+        "CHECK 3 — THRESHOLD/MATRIX COVERAGE:\n"
+        "Verify DOA, payment auth, sourcing, escalation matrices have risks for:\n"
+        "configuration accuracy, bypass potential, monitoring adherence.\n\n"
+        "CHECK 4 — KPI/METRIC COVERAGE:\n"
+        "Verify KPI risks: data accuracy, breach response, reporting timeliness.\n\n"
+        "CHECK 5 — RECOMMENDED RISK SUFFICIENCY:\n"
+        f"Currently {recommended_count} RECOMMENDED entries exist. "
+        "Verify at least 5 RECOMMENDED entries total. Generate more if needed.\n\n"
+        "GENERATE MISSING ENTRIES:\n"
+        f"Complete all 25 fields for every gap. Continue from R{next_risk_id:03d}.\n"
+        "Return ONLY new entries to APPEND (do not repeat existing entries).\n\n"
+    )
+    if user_instructions:
+        prompt += f"AUDITOR PREFERENCES: {user_instructions}\n\n"
+    if section_headers:
+        prompt += f"SOP SECTION HEADERS:\n{section_headers}\n\n"
+    prompt += f"EXISTING RACM ({entry_count} entries):\n{condensed}"
+
+    client = _get_client()
+
+    async def _call():
+        t0 = time.time()
+        response = await client.aio.models.generate_content(
+            model=settings.gemini_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=RACM_SYSTEM_INSTRUCTION,
+                response_mime_type="application/json",
+                response_schema=RACM_SCHEMA,
+                temperature=0,
+                top_p=1,
+                seed=42,
+            ),
+        )
+        api_time = time.time() - t0
+        raw = _extract_json(response.text)
+        result = _repair_json(raw)
+        n_d = len(result.get("detailed_entries", []))
+        n_s = len(result.get("summary_entries", []))
+        logger.info(f"Gap analysis response: {n_d} new detailed + {n_s} new summary, {len(response.text)} chars, {api_time:.1f}s")
         return result
 
     return await _with_retry(_call)

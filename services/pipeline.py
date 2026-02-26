@@ -77,6 +77,15 @@ async def extract_content(file_path: str, file_type: str) -> str:
         raise ValueError(f"Unsupported file type: {file_type}")
 
 
+def _estimate_chunk_time(chunk_chars: int) -> float:
+    """Estimate Gemini analysis time based on content size.
+
+    Observed: 14,749 chars → 175s (Gemini 2.5 Flash with thinking).
+    Rate: ~12s per 1000 chars, minimum 45s per chunk (API overhead).
+    """
+    return max(45, chunk_chars * 12 / 1000)
+
+
 async def analyze_chunks_batched(
     job_id: str,
     chunks: list[str],
@@ -91,7 +100,6 @@ async def analyze_chunks_batched(
     analysis_start = time.time()
 
     # ETA constants
-    AVG_CHUNK_ANALYSIS_TIME = 30  # seconds per chunk (observed average)
     CONSOLIDATION_ESTIMATE = 60   # seconds for consolidation pass
     SUMMARY_ESTIMATE = 15         # seconds for summary generation
     OVERHEAD_BUFFER = 5           # dedup + misc overhead
@@ -144,11 +152,13 @@ async def analyze_chunks_batched(
         # Recalculate ETA based on actual performance
         chunks_done = min(i + len(batch), total)
         chunks_remaining = total - chunks_done
-        if chunks_done > 0:
+        if chunks_done > 0 and chunks_remaining > 0:
+            # Use measured average per chunk for remaining estimate
             avg_per_chunk = elapsed_total / chunks_done
-            eta_remaining = avg_per_chunk * chunks_remaining / batch_size
+            remaining_batches = (chunks_remaining + batch_size - 1) // batch_size
+            eta_remaining = avg_per_chunk * remaining_batches
         else:
-            eta_remaining = AVG_CHUNK_ANALYSIS_TIME * chunks_remaining / batch_size
+            eta_remaining = 0
         eta_remaining += (CONSOLIDATION_ESTIMATE if needs_consolidation else 0) + SUMMARY_ESTIMATE + OVERHEAD_BUFFER
         await update_job(job_id, eta_seconds=max(0, int(eta_remaining)))
 
@@ -254,19 +264,27 @@ async def process_job(job_id: str, file_path: str, file_type: str, prompt: str |
     )
     await update_job(job_id, total_chunks=len(chunks))
 
-    # Calculate initial ETA estimate
-    AVG_CHUNK_ANALYSIS_TIME = 30  # seconds per chunk
+    # Calculate initial ETA estimate based on actual content size
     CONSOLIDATION_ESTIMATE = 60
     SUMMARY_ESTIMATE = 15
     OVERHEAD_BUFFER = 5
     needs_consolidation = len(chunks) > 2
-    initial_eta = (
-        (len(chunks) * AVG_CHUNK_ANALYSIS_TIME // settings.batch_concurrency)
+
+    # Estimate analysis time per batch: use the largest chunk in each batch
+    total_analysis_time = 0
+    for b_start in range(0, len(chunks), settings.batch_concurrency):
+        batch_chunks = chunks[b_start : b_start + settings.batch_concurrency]
+        # Batch time = time for the slowest (largest) chunk in the batch
+        batch_time = max(_estimate_chunk_time(len(c)) for c in batch_chunks)
+        total_analysis_time += batch_time
+
+    initial_eta = int(
+        total_analysis_time
         + (CONSOLIDATION_ESTIMATE if needs_consolidation else 0)
         + SUMMARY_ESTIMATE + OVERHEAD_BUFFER
     )
     await update_job(job_id, eta_seconds=initial_eta)
-    logger.info(f"[{short_id}] Initial ETA: {_fmt_duration(initial_eta)} (chunks={len(chunks)}, consolidation={'yes' if needs_consolidation else 'skip'})")
+    logger.info(f"[{short_id}] Initial ETA: {_fmt_duration(initial_eta)} (chunks={len(chunks)}, total_chars={sum(chunk_sizes)}, consolidation={'yes' if needs_consolidation else 'skip'})")
 
     # ── Phase 3: Analyze each chunk via Gemini ──────────────────
     phase_start = time.time()

@@ -5,13 +5,15 @@ import uuid
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from config import settings
-from database import create_job, get_job
+from database import create_job, delete_job, get_job, update_job, update_result
 from models import (
+    DeleteResponse,
     JobCreateResponse,
     JobResultResponse,
     JobStatus,
     JobStatusResponse,
     RACMResponse,
+    UpdateResultRequest,
 )
 from services.queue import dispatch_job
 
@@ -82,6 +84,63 @@ async def create_analysis_job(
         status=JobStatus.queued,
         message="Job queued for processing",
     )
+
+
+@router.delete("/jobs/{job_id}", response_model=DeleteResponse)
+async def cancel_or_delete_job(job_id: str):
+    job = await get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    job_status = job["status"]
+
+    if job_status in ("queued", "processing"):
+        # Cancel: mark as failed so pipeline stops at next checkpoint
+        await update_job(
+            job_id,
+            status="failed",
+            error_message="Cancelled by user",
+        )
+        # Clean up uploaded file
+        file_path = job.get("file_path", "")
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+        return DeleteResponse(
+            job_id=job_id,
+            deleted=True,
+            message="Job cancelled",
+        )
+
+    # completed or failed: delete the DB row + file
+    file_path = await delete_job(job_id)
+    if file_path and os.path.exists(file_path):
+        os.remove(file_path)
+    return DeleteResponse(
+        job_id=job_id,
+        deleted=True,
+        message="Report deleted",
+    )
+
+
+@router.put("/jobs/{job_id}/result")
+async def save_inline_edits(job_id: str, body: UpdateResultRequest):
+    job = await get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    if job["status"] != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Can only edit results of completed jobs",
+        )
+
+    # Rebuild result JSON preserving summary_narrative
+    existing = json.loads(job["result_json"]) if job["result_json"] else {}
+    existing["detailed_entries"] = body.detailed_entries
+    existing["summary_entries"] = body.summary_entries
+    await update_result(job_id, json.dumps(existing))
+
+    return {"job_id": job_id, "status": "saved"}
 
 
 @router.get("/jobs/{job_id}/status", response_model=JobStatusResponse)

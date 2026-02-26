@@ -111,3 +111,14 @@ class JobResultResponse(BaseModel):
     status: JobStatus
     result: Optional[RACMResponse] = None
     error: Optional[str] = None
+
+
+class DeleteResponse(BaseModel):
+    job_id: str
+    deleted: bool
+    message: str
+
+
+class UpdateResultRequest(BaseModel):
+    detailed_entries: list[dict]
+    summary_entries: list[dict]

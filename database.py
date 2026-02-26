@@ -91,6 +91,23 @@ async def update_job(job_id: str, **fields) -> None:
         await db.commit()
 
 
+async def delete_job(job_id: str) -> str | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT file_path FROM jobs WHERE id = ?", (job_id,))
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        file_path = row["file_path"]
+        await db.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+        await db.commit()
+        return file_path
+
+
+async def update_result(job_id: str, result_json: str) -> None:
+    await update_job(job_id, result_json=result_json)
+
+
 async def get_incomplete_jobs() -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
